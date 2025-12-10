@@ -19,6 +19,7 @@ pub struct Dispatcher<Sink: CommandSink> {
     clock: SimClock,
     scheduler: CommandScheduler,
     sink: Sink,
+    tick_rate: u64,
 }
 
 impl<Sink: CommandSink> Dispatcher<Sink> {
@@ -28,10 +29,21 @@ impl<Sink: CommandSink> Dispatcher<Sink> {
     /// - `sink`: Consumer notified about time updates and ready commands.
     /// - `start_time`: Initial simulated timestamp; defaults to zero when omitted.
     pub fn new_with_clock(sink: Sink, start_time: u64) -> Self {
+        Self::new_with_tick_rate(sink, start_time, 1)
+    }
+
+    /// Creates a dispatcher with an explicit tick rate and starting time.
+    ///
+    /// The tick rate controls how many simulated time units elapse for each
+    /// call to [`tick`]. It must be non-zero to preserve monotonically
+    /// advancing time.
+    pub fn new_with_tick_rate(sink: Sink, start_time: u64, tick_rate: u64) -> Self {
+        assert!(tick_rate > 0, "tick rate must be greater than zero");
         Self {
             clock: SimClock::new(start_time),
             scheduler: CommandScheduler::new(),
             sink,
+            tick_rate,
         }
     }
 
@@ -56,6 +68,18 @@ impl<Sink: CommandSink> Dispatcher<Sink> {
     pub fn step(&mut self, delta: u64) {
         self.clock.step(delta);
         self.publish_and_dispatch();
+    }
+
+    /// Advances simulated time by the configured tick rate and dispatches ready commands.
+    pub fn tick(&mut self) {
+        self.step(self.tick_rate);
+    }
+
+    /// Runs the dispatcher for a fixed number of ticks using the configured tick rate.
+    pub fn run_for_ticks(&mut self, ticks: u64) {
+        for _ in 0..ticks {
+            self.tick();
+        }
     }
 
     /// Advances simulated time to a specific timestamp and dispatches ready commands.
@@ -171,5 +195,19 @@ mod tests {
 
         assert_eq!(dispatcher.now(), 5);
         assert_eq!(dispatcher.sink.times, vec![5, 5]);
+    }
+
+    #[test]
+    fn dispatcher_advances_using_configured_tick_rate() {
+        let sink = RecordingSink::default();
+        let mut dispatcher = Dispatcher::new_with_tick_rate(sink, 0, 3);
+
+        dispatcher.enqueue_from_pipe("6:command").unwrap();
+        dispatcher.run_for_ticks(3);
+
+        assert_eq!(dispatcher.now(), 9);
+        assert_eq!(dispatcher.sink.times, vec![3, 6, 9]);
+        assert_eq!(dispatcher.sink.executed.len(), 1);
+        assert_eq!(dispatcher.sink.executed[0].timestamp, 6);
     }
 }
