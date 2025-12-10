@@ -1,0 +1,6 @@
+# AI Contribution Guidelines
+
+- **Unit Tests First**: Every new feature or fix must include unit tests covering all functionality. Structure tests using the *Arrange-Act-Assert* pattern with clear separation of setup, execution, and verification.
+- **Comprehensive Documentation**: Document **all** functions (public and private) with Rust-style doc comments explaining purpose, parameters, return values, and edge cases. Update module-level documentation when behavior changes.
+- **Idiomatic Rust Practices**: Prefer safe, idiomatic Rust constructs, meaningful naming, and clear error handling. Split responsibilities into focused modules and functions to keep code cohesive and maintainable. Keep functions small, avoid duplication, and ensure ownership/lifetimes are explicit and intentional.
+- **Review Readiness**: Ensure code compiles, tests pass, and examples in documentation stay up to date. Favor readability and maintainability over premature optimization.
