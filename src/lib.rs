@@ -4,6 +4,7 @@ pub mod clock;
 pub mod dispatcher;
 pub mod pipe;
 pub mod scheduler;
+pub mod windows_pipe;
 
 pub use clock::SimClock;
 pub use dispatcher::{CommandSink, Dispatcher};
