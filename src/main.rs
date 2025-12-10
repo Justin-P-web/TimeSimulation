@@ -22,12 +22,12 @@ impl CommandSink for LoggingSink {
 
 fn main() {
     let sink = LoggingSink::default();
-    let mut dispatcher = Dispatcher::new(sink);
+    let tick_rate = 2;
+    let mut dispatcher = Dispatcher::new_with_tick_rate(sink, 0, tick_rate);
 
     dispatcher
         .enqueue_from_pipe("2:demo-command")
         .expect("demo command should parse");
 
-    dispatcher.step(1);
-    dispatcher.step(1);
+    dispatcher.run_for_ticks(2);
 }
