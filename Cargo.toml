@@ -1,13 +1,15 @@
-[package]
-name = "timesimulation"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = [
+    "crates/timesimulation",
+    "crates/demo",
+    "crates/client",
+    "crates/pipe-listener",
+]
+resolver = "2"
 
-[dependencies]
+[workspace.dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-util", "io-std", "sync", "time", "net"] }
 thiserror = "1"
-
-[dev-dependencies]
 tempfile = "3"
