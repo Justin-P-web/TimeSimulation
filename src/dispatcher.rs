@@ -75,6 +75,20 @@ impl<Sink: CommandSink> Dispatcher<Sink> {
         self.step(self.tick_rate);
     }
 
+    /// Updates the configured tick rate.
+    ///
+    /// The new tick rate must be greater than zero to ensure simulated time
+    /// always advances.
+    pub fn set_tick_rate(&mut self, tick_rate: u64) {
+        assert!(tick_rate > 0, "tick rate must be greater than zero");
+        self.tick_rate = tick_rate;
+    }
+
+    /// Returns the currently configured tick rate.
+    pub fn tick_rate(&self) -> u64 {
+        self.tick_rate
+    }
+
     /// Runs the dispatcher for a fixed number of ticks using the configured tick rate.
     pub fn run_for_ticks(&mut self, ticks: u64) {
         for _ in 0..ticks {
@@ -209,5 +223,17 @@ mod tests {
         assert_eq!(dispatcher.sink.times, vec![3, 6, 9]);
         assert_eq!(dispatcher.sink.executed.len(), 1);
         assert_eq!(dispatcher.sink.executed[0].timestamp, 6);
+    }
+
+    #[test]
+    fn dispatcher_allows_runtime_tick_rate_updates() {
+        let sink = RecordingSink::default();
+        let mut dispatcher = Dispatcher::new_with_tick_rate(sink, 0, 1);
+
+        dispatcher.set_tick_rate(5);
+        dispatcher.run_for_ticks(2);
+
+        assert_eq!(dispatcher.now(), 10);
+        assert_eq!(dispatcher.tick_rate(), 5);
     }
 }
