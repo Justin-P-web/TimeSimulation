@@ -67,13 +67,39 @@ Available REPL commands:
 - `help`: Show the built-in help message.
 - `quit` or `exit`: Terminate the client.
 
-## Demo binary
-The `demo` crate offers a minimal example. On non-Windows targets it queues a single `2:demo-command` instruction and runs two ticks to execute it. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue.
+## Demo binaries
+The `demo` crate offers two minimal examples:
+- `demo`: On non-Windows targets it queues a single `2:demo-command` instruction and runs two ticks to execute it. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue.
+- `wait-for-start` (Windows only): Buffers incoming `timestamp:command` lines until a `start` message arrives, then ticks after every enqueue.
 
-Run the demo from the workspace root:
+Run the standard demo from the workspace root:
 
 ```bash
 cargo run -p demo --
+```
+
+Run the wait-for-start demo on Windows (MSVC target):
+
+```bash
+cargo run -p demo --bin wait-for-start --target x86_64-pc-windows-msvc
+```
+
+### Sending commands from PowerShell
+Use the following PowerShell snippet to send pipe-formatted commands to the wait-for-start demo:
+
+```powershell
+$pipe = New-Object System.IO.Pipes.NamedPipeClientStream('.', 'timesimulation-wait-for-start', [System.IO.Pipes.PipeDirection]::Out)
+$pipe.Connect()
+$writer = New-Object System.IO.StreamWriter($pipe)
+$writer.AutoFlush = $true
+
+$writer.WriteLine('4:prepare')
+$writer.WriteLine('8:execute')
+$writer.WriteLine('start')
+$writer.WriteLine('12:cleanup')
+
+$writer.Dispose()
+$pipe.Dispose()
 ```
 
 ## Pipe helpers
