@@ -63,5 +63,11 @@ fn run_simulation(tick_rate: u64) {
         .enqueue_from_pipe("2:demo-command")
         .expect("demo command should parse");
 
-    dispatcher.run_for_ticks(u64::MAX);
+    run_forever(&mut dispatcher);
+}
+
+fn run_forever(dispatcher: &mut Dispatcher<impl CommandSink>) {
+    loop {
+        dispatcher.tick();
+    }
 }
