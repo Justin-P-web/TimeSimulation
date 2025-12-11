@@ -25,50 +25,42 @@ impl CommandSink for LoggingSink {
 }
 
 #[cfg(windows)]
-fn main() -> Result<()> {
+#[tokio::main]
+async fn main() -> Result<()> {
     use tokio::io::{AsyncBufReadExt, BufReader};
     use tokio::net::windows::named_pipe::ServerOptions;
-    use tokio::runtime::Runtime;
 
     let pipe_path = r"\\.\\pipe\\timesimulation-demo";
+
+    println!("waiting for named pipe client on {pipe_path}...");
     let server = ServerOptions::new()
         .first_pipe_instance(true)
         .in_buffer_size(16 * 1024)
         .out_buffer_size(16 * 1024)
         .create(pipe_path)?;
 
-    let runtime = Runtime::new()?;
-
-    println!("waiting for named pipe client on {pipe_path}...");
-    let server = runtime.block_on(async {
-        let server = server;
-        server.connect().await?;
-        println!("client attached; starting dispatcher");
-        Result::<_, anyhow::Error>::Ok(server)
-    })?;
+    server.connect().await?;
+    println!("client attached; starting dispatcher");
 
     let sink = LoggingSink::default();
     let tick_rate = 2;
     let mut dispatcher = Dispatcher::new_with_tick_rate(sink, 0, tick_rate);
 
-    runtime.block_on(async move {
-        let reader = BufReader::new(server);
-        let mut lines = reader.lines();
+    let reader = BufReader::new(server);
+    let mut lines = reader.lines();
 
-        while let Some(line) = lines.next_line().await? {
-            if line.trim().is_empty() {
-                continue;
-            }
-
-            match dispatcher.enqueue_from_pipe(&line) {
-                Ok(()) => dispatcher.tick(),
-                Err(err) => eprintln!("failed to parse pipe line '{line}': {err}"),
-            }
+    while let Some(line) = lines.next_line().await? {
+        if line.trim().is_empty() {
+            continue;
         }
 
-        println!("pipe client disconnected; shutting down");
-        Result::<_, anyhow::Error>::Ok(())
-    })?;
+        match dispatcher.enqueue_from_pipe(&line) {
+            Ok(()) => dispatcher.tick(),
+            Err(err) => eprintln!("failed to parse pipe line '{line}': {err}"),
+        }
+    }
+
+    println!("pipe client disconnected; shutting down");
 
     Ok(())
 }
