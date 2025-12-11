@@ -3,6 +3,14 @@ name = "demo"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "demo"
+path = "src/main.rs"
+
+[[bin]]
+name = "wait-for-start"
+path = "src/wait_for_start.rs"
+
 [dependencies]
 anyhow = { workspace = true }
 tokio = { workspace = true }
