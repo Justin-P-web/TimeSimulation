@@ -20,7 +20,16 @@ impl CommandSink for LoggingSink {
     }
 
     fn execute(&mut self, command: &ScheduledCommand) {
-        println!("[execute @{}] {}", command.timestamp, command.command);
+        match command.command.as_str() {
+            "scale-time" => {
+                let scaled = command.timestamp * 4;
+                println!(
+                    "[execute @{}] {} (scaled timestamp: {})",
+                    command.timestamp, command.command, scaled
+                );
+            }
+            _ => println!("[execute @{}] {}", command.timestamp, command.command),
+        }
     }
 }
 
@@ -75,5 +84,9 @@ fn main() {
         .enqueue_from_pipe("2:demo-command")
         .expect("demo command should parse");
 
-    dispatcher.run_for_ticks(2);
+    dispatcher
+        .enqueue_from_pipe("3:scale-time")
+        .expect("scale-time command should parse");
+
+    dispatcher.run_for_ticks(4);
 }
