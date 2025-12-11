@@ -41,7 +41,7 @@ fn main() -> Result<()> {
 
     println!("waiting for named pipe client on {pipe_path}...");
     let server = runtime.block_on(async {
-        let mut server = server;
+        let server = server;
         server.connect().await?;
         println!("client attached; starting dispatcher");
         Result::<_, anyhow::Error>::Ok(server)
@@ -52,7 +52,7 @@ fn main() -> Result<()> {
     let mut dispatcher = Dispatcher::new_with_tick_rate(sink, 0, tick_rate);
 
     runtime.block_on(async move {
-        let mut reader = BufReader::new(server);
+        let reader = BufReader::new(server);
         let mut lines = reader.lines();
 
         while let Some(line) = lines.next_line().await? {
