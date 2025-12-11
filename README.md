@@ -69,13 +69,30 @@ Available REPL commands:
 
 ## Demo binaries
 The `demo` crate offers two minimal examples:
-- `demo`: On non-Windows targets it queues a single `2:demo-command` instruction and runs two ticks to execute it. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue.
+- `demo`: On non-Windows targets it queues a `2:demo-command` instruction and a `3:scale-time` instruction (which multiplies the timestamp by four when executing) and runs four ticks to execute both. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue.
 - `wait-for-start` (Windows only): Buffers incoming `timestamp:command` lines until a `start` message arrives, then ticks after every enqueue.
 
 Run the standard demo from the workspace root:
 
 ```bash
 cargo run -p demo --
+```
+
+When the non-Windows demo runs, it enqueues two commands using pipe syntax:
+
+```
+2:demo-command
+3:scale-time
+```
+
+`scale-time` computes `timestamp * 4`, so the dispatcher prints the scaled value alongside the scheduled timestamp:
+
+```
+[sim-time] 0
+[sim-time] 1
+[execute @2] demo-command
+[sim-time] 2
+[execute @3] scale-time (scaled timestamp: 12)
 ```
 
 Run the wait-for-start demo on Windows (MSVC target):
