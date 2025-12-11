@@ -12,6 +12,8 @@ use tokio::sync::mpsc::Sender;
 use crate::pipe::parse_pipe_line;
 #[cfg(windows)]
 use tokio::io::{AsyncBufReadExt, BufReader};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ServerOptions;
 
 /// Spawns a listener that accepts pipe clients and forwards parsed commands to
 /// the provided scheduler channel.
@@ -24,13 +26,11 @@ pub async fn listen_for_pipe_commands(
     pipe_name: &str,
     sender: Sender<ScheduledCommand>,
 ) -> io::Result<()> {
-    use tokio::net::windows::named_pipe::PipeListener;
-
     let pipe_path = format!(r"\\.\\pipe\\{}", pipe_name);
-    let mut listener = PipeListener::bind(&pipe_path)?;
 
     loop {
-        let mut connection = listener.accept().await?;
+        let mut connection = ServerOptions::new().create(&pipe_path)?;
+        connection.connect().await?;
         let mut client_sender = sender.clone();
 
         tokio::spawn(async move {
@@ -49,7 +49,7 @@ async fn forward_commands<R>(
 where
     R: tokio::io::AsyncRead + Unpin,
 {
-    let mut reader = BufReader::new(reader);
+    let reader = BufReader::new(reader);
     let mut lines = reader.lines();
 
     while let Some(line) = lines.next_line().await? {

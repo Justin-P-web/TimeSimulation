@@ -54,8 +54,12 @@ async fn main() -> anyhow::Result<()> {
 
     let args = Args::parse();
     let (tx, mut rx) = mpsc::channel::<ScheduledCommand>(32);
-
-    tokio::spawn(listen_for_pipe_commands(&args.pipe_name, tx));
+    let pipe_name = args.pipe_name.clone();
+    tokio::spawn(async move {
+        if let Err(err) = listen_for_pipe_commands(&pipe_name, tx).await {
+            eprintln!("named pipe listener error: {err}");
+        }
+    });
 
     let dispatcher = Arc::new(Mutex::new(Dispatcher::new_with_tick_rate(
         LoggingSink::default(),
