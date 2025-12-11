@@ -7,7 +7,8 @@
 //! ```
 //!
 //! The `start` subcommand constructs a dispatcher with the provided tick rate
-//! (default: `2`), enqueues a sample command, and advances time indefinitely.
+//! (default: `2`, and used automatically when no subcommand is given), enqueues
+//! a sample command, and advances time indefinitely.
 //! In real deployments, external processes would feed pipe lines to the
 //! dispatcher; here we simply enqueue a sample command for illustration.
 
@@ -21,7 +22,7 @@ const DEFAULT_TICK_RATE: u64 = 2;
 #[command(name = "timesimulation", about = "Deterministic time simulation demo")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Debug, Subcommand)]
@@ -50,7 +51,9 @@ impl CommandSink for LoggingSink {
 fn main() {
     let cli = Cli::parse();
 
-    match cli.command {
+    match cli.command.unwrap_or(Commands::Start {
+        tick_rate: DEFAULT_TICK_RATE,
+    }) {
         Commands::Start { tick_rate } => run_simulation(tick_rate),
     }
 }
