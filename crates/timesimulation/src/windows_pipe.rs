@@ -275,7 +275,8 @@ mod tests {
         // Arrange
         let (mut writer, mut reader) = tokio::io::duplex(128);
         let (mut sender, mut receiver) = tokio::sync::mpsc::channel(4);
-        let forwarder = tokio::spawn(async move { forward_commands(&mut reader, &mut sender).await });
+        let forwarder =
+            tokio::spawn(async move { forward_commands(&mut reader, &mut sender).await });
 
         // Act
         writer

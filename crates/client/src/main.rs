@@ -669,10 +669,7 @@ mod tests {
                     command: "launch".to_string(),
                 }),
             ),
-            (
-                "pipe 4:cmd",
-                ReplCommand::PipeLine("4:cmd".to_string()),
-            ),
+            ("pipe 4:cmd", ReplCommand::PipeLine("4:cmd".to_string())),
             ("now", ReplCommand::Now),
             ("help", ReplCommand::Help),
             ("quit", ReplCommand::Quit),
@@ -729,7 +726,10 @@ mod tests {
 
         // Assert
         let recorded_times = times.lock().unwrap().clone();
-        assert!(recorded_times.len() >= 3, "expected multiple ticks while enabled");
+        assert!(
+            recorded_times.len() >= 3,
+            "expected multiple ticks while enabled"
+        );
         assert!(recorded_times.windows(2).all(|w| w[0] <= w[1]));
     }
 
@@ -766,7 +766,10 @@ mod tests {
         forwarder.await.expect("forwarder should complete");
 
         // Assert
-        assert!(!*tick_receiver.borrow(), "ticking should be disabled after stop");
+        assert!(
+            !*tick_receiver.borrow(),
+            "ticking should be disabled after stop"
+        );
         let recorded_times = times.lock().unwrap().clone();
         let recorded_executed = executed.lock().unwrap().clone();
         assert_eq!(recorded_times, vec![2, 5, 10, 12]);
