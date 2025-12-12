@@ -100,11 +100,11 @@ cargo run -p demo --target x86_64-pc-windows-msvc
 cargo run -p demo --bin wait-for-start --target x86_64-pc-windows-msvc
 ```
 
-In a separate shell, run the client in pipe mode and point it at the matching endpoint. You can also attach to a secondary output pipe if the server exposes one:
+In a separate shell, run the client in pipe mode and point it at the matching endpoint. The demo also exposes a secondary output pipe that mirrors its console logs so the client can receive responses without sharing stdout:
 
 ```bash
 cargo run -p client -- --mode pipe --pipe-endpoint \\.\\pipe\\timesimulation-demo
-# or, with an output channel
+# or, with the output channel attached
 cargo run -p client -- --mode pipe --pipe-endpoint \\.\\pipe\\timesimulation-demo --pipe-output-endpoint \\.\\pipe\\timesimulation-demo-output
 ```
 
