@@ -210,6 +210,39 @@ async fn queue_forwarder(
                 let mut guard = dispatcher.lock().await;
                 guard.enqueue(command.timestamp, command.command);
             }
+            PipeEvent::Tick => {
+                let mut guard = dispatcher.lock().await;
+                guard.tick();
+                println!("performed single tick at rate {} (pipe)", guard.tick_rate());
+            }
+            PipeEvent::Step(delta) => {
+                let mut guard = dispatcher.lock().await;
+                guard.step(delta);
+                println!("advanced clock by {delta} without changing tick rate (pipe)");
+            }
+            PipeEvent::Advance(target) => {
+                let mut guard = dispatcher.lock().await;
+                guard.advance_to(target);
+                println!("advanced clock to {target} (pipe)");
+            }
+            PipeEvent::RunTicks(ticks) => {
+                let mut guard = dispatcher.lock().await;
+                guard.run_for_ticks(ticks);
+                println!(
+                    "ran {ticks} tick(s) at rate {}; current time: {} (pipe)",
+                    guard.tick_rate(),
+                    guard.now()
+                );
+            }
+            PipeEvent::SetRate(rate) => {
+                let mut guard = dispatcher.lock().await;
+                guard.set_tick_rate(rate);
+                println!("tick rate updated to {rate} (pipe)");
+            }
+            PipeEvent::Now => {
+                let guard = dispatcher.lock().await;
+                println!("current simulated time: {} (pipe)", guard.now());
+            }
             PipeEvent::Start => {
                 let _ = tick_sender.send(true);
                 println!("ticking started (pipe)");
@@ -233,6 +266,23 @@ async fn forward_repl_line(
     Ok(())
 }
 
+#[cfg(windows)]
+fn serialize_repl_command(command: &ReplCommand) -> Option<String> {
+    match command {
+        ReplCommand::Start => Some("start".to_string()),
+        ReplCommand::Stop => Some("stop".to_string()),
+        ReplCommand::Tick => Some("tick".to_string()),
+        ReplCommand::Step(delta) => Some(format!("step {delta}")),
+        ReplCommand::Advance(target) => Some(format!("advance {target}")),
+        ReplCommand::RunTicks(ticks) => Some(format!("run {ticks}")),
+        ReplCommand::SetRate(rate) => Some(format!("rate {rate}")),
+        ReplCommand::Enqueue(command) => Some(format!("{}:{}", command.timestamp, command.command)),
+        ReplCommand::PipeLine(line) => Some(line.to_string()),
+        ReplCommand::Now => Some("now".to_string()),
+        ReplCommand::Help | ReplCommand::Quit => None,
+    }
+}
+
 fn print_help() {
     println!(
         r#"available commands:
@@ -242,7 +292,7 @@ fn print_help() {
   step <delta>          - advance by an explicit delta
   advance <timestamp>   - jump directly to a target timestamp
   run <ticks>           - run the dispatcher for a fixed number of ticks
-  rate <n>              - set tick rate to a non-zero integer (local mode only)
+  rate <n>              - set tick rate to a non-zero integer
   now                   - print current simulated time
   help                  - show this message
   quit | exit           - terminate the client
@@ -252,10 +302,14 @@ pipe helpers:
   pipe <t:cmd>          - parse and enqueue using pipe syntax
 
 windows named pipe controls (when a listener is active on Windows):
-  start                 - (pipe) resume ticking for connected listeners
-  stop | pause          - (pipe) stop ticking for connected listeners
-  <timestamp:command>   - (pipe) schedule a command using dispatcher pipe syntax
-  (pipe listener does not accept rate changes or transport switches)"#
+  start | stop | pause  - (pipe) control ticking state for connected listeners
+  tick                  - (pipe) execute a single tick immediately
+  step <delta>          - (pipe) advance by a delta without changing the tick rate
+  advance <timestamp>   - (pipe) jump directly to a target timestamp
+  run <ticks>           - (pipe) run the dispatcher for a fixed number of ticks
+  rate <n>              - (pipe) set tick rate to a non-zero integer
+  now                   - (pipe) print the current simulated time
+  <timestamp:command>   - (pipe) schedule a command using dispatcher pipe syntax"#
     );
 }
 
@@ -412,7 +466,7 @@ async fn run_pipe_client(args: &Args) -> anyhow::Result<()> {
         }
     });
 
-    println!("remote mode active. type 'enqueue' or 'pipe' commands to send to the dispatcher.");
+    println!("remote mode active. type dispatcher commands to send to the server pipe.");
 
     let stdin = BufReader::new(tokio::io::stdin());
     let mut lines = stdin.lines();
@@ -426,32 +480,18 @@ async fn run_pipe_client(args: &Args) -> anyhow::Result<()> {
             }
         };
 
-        match parsed {
-            ReplCommand::Enqueue(command) => {
-                let pipe_line = format!("{}:{}", command.timestamp, command.command);
-                if let Err(err) = forward_repl_line(&mut writer, &pipe_line).await {
+        match serialize_repl_command(&parsed) {
+            Some(line) => {
+                if let Err(err) = forward_repl_line(&mut writer, &line).await {
                     eprintln!("failed to send command: {err}");
                     break;
                 }
             }
-            ReplCommand::PipeLine(line) => {
-                if let Err(err) = forward_repl_line(&mut writer, &line).await {
-                    eprintln!("failed to send pipe line: {err}");
-                    break;
-                }
-            }
-            ReplCommand::Help => print_help(),
-            ReplCommand::Quit => break,
-            ReplCommand::Start
-            | ReplCommand::Stop
-            | ReplCommand::Tick
-            | ReplCommand::Step(_)
-            | ReplCommand::Advance(_)
-            | ReplCommand::RunTicks(_)
-            | ReplCommand::SetRate(_)
-            | ReplCommand::Now => {
-                eprintln!("command is only available in local mode");
-            }
+            None => match parsed {
+                ReplCommand::Help => print_help(),
+                ReplCommand::Quit => break,
+                _ => {}
+            },
         }
     }
 
