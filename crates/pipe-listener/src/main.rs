@@ -77,6 +77,30 @@ async fn main() -> anyhow::Result<()> {
                         let mut dispatcher = dispatcher.lock().await;
                         dispatcher.enqueue(cmd.timestamp, cmd.command);
                     }
+                    PipeEvent::Tick => {
+                        let mut dispatcher = dispatcher.lock().await;
+                        dispatcher.tick();
+                    }
+                    PipeEvent::Step(delta) => {
+                        let mut dispatcher = dispatcher.lock().await;
+                        dispatcher.step(delta);
+                    }
+                    PipeEvent::Advance(target) => {
+                        let mut dispatcher = dispatcher.lock().await;
+                        dispatcher.advance_to(target);
+                    }
+                    PipeEvent::RunTicks(ticks) => {
+                        let mut dispatcher = dispatcher.lock().await;
+                        dispatcher.run_for_ticks(ticks);
+                    }
+                    PipeEvent::SetRate(rate) => {
+                        let mut dispatcher = dispatcher.lock().await;
+                        dispatcher.set_tick_rate(rate);
+                    }
+                    PipeEvent::Now => {
+                        let dispatcher = dispatcher.lock().await;
+                        println!("[sim-time] {}", dispatcher.now());
+                    }
                     PipeEvent::Start => {
                         ticking = true;
                     }

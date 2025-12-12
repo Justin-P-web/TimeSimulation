@@ -15,6 +15,18 @@ pub enum PipeEvent {
     Start,
     /// Stop ticking immediately.
     Stop,
+    /// Execute a single tick immediately.
+    Tick,
+    /// Advance by an explicit delta without changing the tick rate.
+    Step(u64),
+    /// Jump directly to a target timestamp.
+    Advance(u64),
+    /// Run the dispatcher for a fixed number of ticks.
+    RunTicks(u64),
+    /// Update the tick rate used when progressing simulated time.
+    SetRate(u64),
+    /// Query the current simulated time.
+    Now,
     /// Pause ticking without terminating the listener.
     Pause,
     /// Scheduled command to enqueue in the dispatcher.
@@ -74,11 +86,18 @@ where
         match lines.next_line().await? {
             Some(line) => {
                 let trimmed = line.trim();
-                if let Some(event) = parse_control_instruction(trimmed) {
-                    if sender.send(event).await.is_err() {
-                        break;
+                match parse_control_instruction(trimmed) {
+                    Ok(Some(event)) => {
+                        if sender.send(event).await.is_err() {
+                            break;
+                        }
+                        continue;
                     }
-                    continue;
+                    Ok(None) => {}
+                    Err(err) => {
+                        eprintln!("failed to parse control instruction '{line}': {err}");
+                        continue;
+                    }
                 }
 
                 match parse_pipe_line(trimmed) {
@@ -110,13 +129,53 @@ where
 }
 
 #[cfg(windows)]
-fn parse_control_instruction(line: &str) -> Option<PipeEvent> {
-    match line.to_ascii_lowercase().as_str() {
+fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String> {
+    let (command, rest) = match line.splitn(2, ' ').collect::<Vec<_>>().as_slice() {
+        [command, rest] => (command.to_ascii_lowercase(), rest.trim()),
+        [command] => match command.split_once(':') {
+            Some((cmd, rest)) => (cmd.to_ascii_lowercase(), rest.trim()),
+            None => (command.to_ascii_lowercase(), ""),
+        },
+        _ => (String::new(), ""),
+    };
+
+    let parsed = match command.as_str() {
         "start" => Some(PipeEvent::Start),
         "stop" => Some(PipeEvent::Stop),
         "pause" => Some(PipeEvent::Pause),
+        "tick" => Some(PipeEvent::Tick),
+        "step" => {
+            let delta = rest
+                .parse::<u64>()
+                .map_err(|_| "usage: step <non-negative delta>".to_string())?;
+            Some(PipeEvent::Step(delta))
+        }
+        "advance" => {
+            let target = rest
+                .parse::<u64>()
+                .map_err(|_| "usage: advance <target timestamp>".to_string())?;
+            Some(PipeEvent::Advance(target))
+        }
+        "run" => {
+            let ticks = rest
+                .parse::<u64>()
+                .map_err(|_| "usage: run <number of ticks>".to_string())?;
+            Some(PipeEvent::RunTicks(ticks))
+        }
+        "rate" => {
+            let rate = rest
+                .parse::<u64>()
+                .map_err(|_| "usage: rate <non-zero u64>".to_string())?;
+            if rate == 0 {
+                return Err("tick rate must be greater than zero".to_string());
+            }
+            Some(PipeEvent::SetRate(rate))
+        }
+        "now" => Some(PipeEvent::Now),
         _ => None,
-    }
+    };
+
+    Ok(parsed)
 }
 
 /// Stub implementation used on non-Windows targets to keep the crate

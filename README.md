@@ -71,6 +71,19 @@ Available REPL commands:
 - `help`: Show the built-in help message.
 - `quit` or `exit`: Terminate the client.
 
+### Windows pipe protocol
+When a named pipe listener is active (using the `pipe-listener` binary or the client in pipe mode on Windows), all dispatcher
+controls can be sent remotely. The listener understands the same command verbs as the REPL, plus raw pipe lines:
+
+- `start` / `stop` / `pause`: Control whether periodic ticking is active.
+- `tick`: Execute a single tick immediately.
+- `step <delta>`: Advance simulated time by `delta` without changing the tick rate.
+- `advance <timestamp>`: Jump directly to the provided timestamp.
+- `run <ticks>`: Run the dispatcher for the given number of ticks.
+- `rate <n>`: Set the tick rate to a non-zero integer.
+- `now`: Print the current simulated time.
+- `<timestamp:command>`: Schedule a command using the dispatcher pipe syntax.
+
 ## Demo binaries
 The `demo` crate offers two minimal examples:
 - `demo`: On non-Windows targets it queues a `2:demo-command` instruction and a `3:scale-time` instruction (which multiplies the timestamp by four when executing) and runs four ticks to execute both. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue. The Windows listener also accepts control lines to steer ticking without recompiling:
