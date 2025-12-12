@@ -235,7 +235,27 @@ async fn forward_repl_line(
 
 fn print_help() {
     println!(
-        "available commands:\n  start                 - begin ticking on the configured interval\n  stop                  - pause ticking\n  tick                  - advance one tick using the current rate\n  step <delta>          - advance by an explicit delta\n  advance <timestamp>   - jump directly to a target timestamp\n  run <ticks>           - run the dispatcher for a fixed number of ticks\n  rate <n>              - set tick rate to a non-zero integer\n  enqueue <t> <cmd>     - schedule a command at timestamp t\n  pipe <t:cmd>          - parse and enqueue using pipe syntax\n  now                   - print current simulated time\n  help                  - show this message\n  quit | exit           - terminate the client"
+        r#"available commands:
+  start                 - begin ticking on the configured interval
+  stop                  - pause ticking
+  tick                  - advance one tick using the current rate
+  step <delta>          - advance by an explicit delta
+  advance <timestamp>   - jump directly to a target timestamp
+  run <ticks>           - run the dispatcher for a fixed number of ticks
+  rate <n>              - set tick rate to a non-zero integer (local mode only)
+  now                   - print current simulated time
+  help                  - show this message
+  quit | exit           - terminate the client
+
+pipe helpers:
+  enqueue <t> <cmd>     - schedule a command at timestamp t
+  pipe <t:cmd>          - parse and enqueue using pipe syntax
+
+windows named pipe controls (when a listener is active on Windows):
+  start                 - (pipe) resume ticking for connected listeners
+  stop | pause          - (pipe) stop ticking for connected listeners
+  <timestamp:command>   - (pipe) schedule a command using dispatcher pipe syntax
+  (pipe listener does not accept rate changes or transport switches)"#
     );
 }
 
