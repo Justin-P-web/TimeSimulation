@@ -8,11 +8,23 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use clap::Parser;
+use clap::{Parser, ValueEnum};
 use timesimulation::{CommandSink, Dispatcher, ScheduledCommand, parse_pipe_line};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time;
+
+#[cfg(windows)]
+use tokio::io::{AsyncWriteExt, BufWriter};
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::ClientOptions;
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
+enum TransportMode {
+    Local,
+    #[cfg(windows)]
+    Pipe,
+}
 
 #[derive(Debug, Parser)]
 #[command(author, version, about = "Interactive dispatcher client")]
@@ -33,6 +45,20 @@ struct Args {
     #[cfg(windows)]
     #[arg(long)]
     pipe_name: Option<String>,
+
+    /// Preferred transport for REPL commands
+    #[arg(long, value_enum, default_value_t = TransportMode::Local)]
+    mode: TransportMode,
+
+    /// Named pipe endpoint for remote mode
+    #[cfg(windows)]
+    #[arg(long, default_value = r"\\.\\pipe\\timesimulation-demo")]
+    pipe_endpoint: String,
+
+    /// Optional output pipe endpoint for receiving remote logs
+    #[cfg(windows)]
+    #[arg(long)]
+    pipe_output_endpoint: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -149,10 +175,24 @@ async fn queue_forwarder(
     }
 }
 
-#[tokio::main(flavor = "multi_thread")]
-async fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
+#[cfg(windows)]
+async fn forward_repl_line(
+    writer: &mut BufWriter<tokio::net::windows::named_pipe::NamedPipeClient>,
+    line: &str,
+) -> anyhow::Result<()> {
+    writer.write_all(line.as_bytes()).await?;
+    writer.write_all(b"\n").await?;
+    writer.flush().await?;
+    Ok(())
+}
 
+fn print_help() {
+    println!(
+        "available commands:\n  start                 - begin ticking on the configured interval\n  stop      - pause ticking\n  rate <n>              - set tick rate to a non-zero integer\n  enqueue <t> <cmd>     - schedule a command at timestamp t\n  pipe <t:cmd>          - parse and enqueue using pipe syntax\n  now                   - print current simulated time\n  help                  - show this message\n  quit | exit           - terminate the client"
+    );
+}
+
+async fn run_local_client(args: &Args) -> anyhow::Result<()> {
     if args.tick_rate == 0 {
         anyhow::bail!("tick rate must be greater than zero");
     }
@@ -235,15 +275,92 @@ async fn main() -> anyhow::Result<()> {
                 let guard = dispatcher.lock().await;
                 println!("current simulated time: {}", guard.now());
             }
-            ReplCommand::Help => {
-                println!(
-                    "available commands:\n  start                 - begin ticking on the configured interval\n  stop                  - pause ticking\n  rate <n>              - set tick rate to a non-zero integer\n  enqueue <t> <cmd>     - schedule a command at timestamp t\n  pipe <t:cmd>          - parse and enqueue using pipe syntax\n  now                   - print current simulated time\n  help                  - show this message\n  quit | exit           - terminate the client"
-                );
-            }
+            ReplCommand::Help => print_help(),
             ReplCommand::Quit => break,
         }
     }
 
     println!("shutting down client");
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn run_pipe_client(args: &Args) -> anyhow::Result<()> {
+    println!("connecting to dispatcher pipe at {}", args.pipe_endpoint);
+    let client = ClientOptions::new().open(&args.pipe_endpoint)?;
+    let (read_half, write_half) = client.into_split();
+    let mut writer = BufWriter::new(write_half);
+
+    let mut output_reader: BufReader<tokio::net::windows::named_pipe::NamedPipeClient> =
+        if let Some(output_endpoint) = args.pipe_output_endpoint.as_ref() {
+            println!("attaching to output pipe at {output_endpoint}");
+            let output_client = ClientOptions::new().open(output_endpoint)?;
+            BufReader::new(output_client)
+        } else {
+            BufReader::new(read_half)
+        };
+
+    tokio::spawn(async move {
+        let mut output_lines = output_reader.lines();
+        while let Ok(Some(line)) = output_lines.next_line().await {
+            println!("{line}");
+        }
+    });
+
+    println!("remote mode active. type 'enqueue' or 'pipe' commands to send to the dispatcher.");
+
+    let stdin = BufReader::new(tokio::io::stdin());
+    let mut lines = stdin.lines();
+
+    while let Some(line) = lines.next_line().await? {
+        let parsed = match parse_repl_command(&line) {
+            Ok(cmd) => cmd,
+            Err(err) => {
+                eprintln!("{err}");
+                continue;
+            }
+        };
+
+        match parsed {
+            ReplCommand::Enqueue(command) => {
+                let pipe_line = format!("{}:{}", command.timestamp, command.command);
+                if let Err(err) = forward_repl_line(&mut writer, &pipe_line).await {
+                    eprintln!("failed to send command: {err}");
+                    break;
+                }
+            }
+            ReplCommand::PipeLine(line) => {
+                if let Err(err) = forward_repl_line(&mut writer, &line).await {
+                    eprintln!("failed to send pipe line: {err}");
+                    break;
+                }
+            }
+            ReplCommand::Help => print_help(),
+            ReplCommand::Quit => break,
+            ReplCommand::Start | ReplCommand::Stop | ReplCommand::SetRate(_) | ReplCommand::Now => {
+                eprintln!("command is only available in local mode");
+            }
+        }
+    }
+
+    println!("closing pipe client");
+    Ok(())
+}
+
+#[tokio::main(flavor = "multi_thread")]
+async fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+
+    #[cfg(windows)]
+    {
+        match args.mode {
+            TransportMode::Local => run_local_client(&args).await?,
+            TransportMode::Pipe => run_pipe_client(&args).await?,
+        }
+    }
+
+    #[cfg(not(windows))]
+    run_local_client(&args).await?;
+
     Ok(())
 }
