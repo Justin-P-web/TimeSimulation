@@ -85,6 +85,10 @@ impl CommandSink for StdoutSink {
 enum ReplCommand {
     Start,
     Stop,
+    Tick,
+    Step(u64),
+    Advance(u64),
+    RunTicks(u64),
     SetRate(u64),
     Enqueue(ScheduledCommand),
     PipeLine(String),
@@ -106,9 +110,31 @@ fn parse_repl_command(line: &str) -> Result<ReplCommand, String> {
     match command.to_lowercase().as_str() {
         "start" => Ok(ReplCommand::Start),
         "stop" => Ok(ReplCommand::Stop),
+        "tick" => Ok(ReplCommand::Tick),
         "now" => Ok(ReplCommand::Now),
         "help" => Ok(ReplCommand::Help),
         "quit" | "exit" => Ok(ReplCommand::Quit),
+        "step" => {
+            let delta = rest
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| "usage: step <non-negative delta>".to_string())?;
+            Ok(ReplCommand::Step(delta))
+        }
+        "advance" => {
+            let target = rest
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| "usage: advance <target timestamp>".to_string())?;
+            Ok(ReplCommand::Advance(target))
+        }
+        "run" => {
+            let ticks = rest
+                .trim()
+                .parse::<u64>()
+                .map_err(|_| "usage: run <number of ticks>".to_string())?;
+            Ok(ReplCommand::RunTicks(ticks))
+        }
         "rate" => {
             let rate = rest
                 .trim()
@@ -195,7 +221,7 @@ async fn forward_repl_line(
 
 fn print_help() {
     println!(
-        "available commands:\n  start                 - begin ticking on the configured interval\n  stop      - pause ticking\n  rate <n>              - set tick rate to a non-zero integer\n  enqueue <t> <cmd>     - schedule a command at timestamp t\n  pipe <t:cmd>          - parse and enqueue using pipe syntax\n  now                   - print current simulated time\n  help                  - show this message\n  quit | exit           - terminate the client"
+        "available commands:\n  start                 - begin ticking on the configured interval\n  stop                  - pause ticking\n  tick                  - advance one tick using the current rate\n  step <delta>          - advance by an explicit delta\n  advance <timestamp>   - jump directly to a target timestamp\n  run <ticks>           - run the dispatcher for a fixed number of ticks\n  rate <n>              - set tick rate to a non-zero integer\n  enqueue <t> <cmd>     - schedule a command at timestamp t\n  pipe <t:cmd>          - parse and enqueue using pipe syntax\n  now                   - print current simulated time\n  help                  - show this message\n  quit | exit           - terminate the client"
     );
 }
 
@@ -255,6 +281,30 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
             ReplCommand::Stop => {
                 let _ = tick_sender.send(false);
                 println!("ticking stopped");
+            }
+            ReplCommand::Tick => {
+                let mut guard = dispatcher.lock().await;
+                guard.tick();
+                println!("performed single tick at rate {}", guard.tick_rate());
+            }
+            ReplCommand::Step(delta) => {
+                let mut guard = dispatcher.lock().await;
+                guard.step(delta);
+                println!("advanced clock by {delta} without changing tick rate");
+            }
+            ReplCommand::Advance(target) => {
+                let mut guard = dispatcher.lock().await;
+                guard.advance_to(target);
+                println!("advanced clock to {target}");
+            }
+            ReplCommand::RunTicks(ticks) => {
+                let mut guard = dispatcher.lock().await;
+                guard.run_for_ticks(ticks);
+                println!(
+                    "ran {ticks} tick(s) at rate {}; current time: {}",
+                    guard.tick_rate(),
+                    guard.now()
+                );
             }
             ReplCommand::SetRate(rate) => {
                 let mut guard = dispatcher.lock().await;
@@ -345,7 +395,14 @@ async fn run_pipe_client(args: &Args) -> anyhow::Result<()> {
             }
             ReplCommand::Help => print_help(),
             ReplCommand::Quit => break,
-            ReplCommand::Start | ReplCommand::Stop | ReplCommand::SetRate(_) | ReplCommand::Now => {
+            ReplCommand::Start
+            | ReplCommand::Stop
+            | ReplCommand::Tick
+            | ReplCommand::Step(_)
+            | ReplCommand::Advance(_)
+            | ReplCommand::RunTicks(_)
+            | ReplCommand::SetRate(_)
+            | ReplCommand::Now => {
                 eprintln!("command is only available in local mode");
             }
         }

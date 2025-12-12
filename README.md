@@ -60,6 +60,10 @@ Key flags:
 
 Available REPL commands:
 - `start` / `stop`: Enable or pause ticking on the configured interval.
+- `tick`: Advance a single tick using the current tick rate.
+- `step <delta>`: Manually advance simulated time by `delta` units.
+- `advance <timestamp>`: Jump directly to the provided timestamp.
+- `run <ticks>`: Advance the dispatcher for the given number of ticks.
 - `rate <n>`: Set a new non-zero tick rate.
 - `enqueue <timestamp> <command>`: Schedule a command for a future timestamp.
 - `pipe <timestamp:command>`: Parse and enqueue using pipe syntax.
