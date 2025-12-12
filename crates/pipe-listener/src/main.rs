@@ -48,7 +48,7 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
-    use timesimulation::windows_pipe::{listen_for_pipe_commands, PipeEvent};
+    use timesimulation::windows_pipe::{PipeEvent, listen_for_pipe_commands};
     use tokio::sync::{Mutex, mpsc};
     use tokio::time::{self, Duration};
 
