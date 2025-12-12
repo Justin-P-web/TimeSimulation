@@ -82,7 +82,7 @@ impl CommandSink for StdoutSink {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum ReplCommand {
     Start,
     Stop,
@@ -188,8 +188,8 @@ fn parse_repl_command(line: &str) -> Result<ReplCommand, String> {
 /// The loop wakes at the provided interval and performs a tick when the watch
 /// channel indicates ticking is active. When the sender side of the watch
 /// channel is dropped the loop exits, allowing graceful shutdown.
-async fn tick_loop(
-    dispatcher: Arc<Mutex<Dispatcher<StdoutSink>>>,
+async fn tick_loop<Sink: CommandSink + Send + 'static>(
+    dispatcher: Arc<Mutex<Dispatcher<Sink>>>,
     mut ticker: watch::Receiver<bool>,
     interval: Duration,
 ) {
@@ -218,8 +218,8 @@ async fn tick_loop(
 /// occur in order. Sender errors are ignored after printing because they imply
 /// the receiver has gone away. Pipe disconnections disable ticking but do not
 /// terminate the forwarder, letting future messages resume work.
-async fn queue_forwarder(
-    dispatcher: Arc<Mutex<Dispatcher<StdoutSink>>>,
+async fn queue_forwarder<Sink: CommandSink + Send + 'static>(
+    dispatcher: Arc<Mutex<Dispatcher<Sink>>>,
     mut receiver: mpsc::Receiver<PipeEvent>,
     tick_sender: watch::Sender<bool>,
 ) {
@@ -628,5 +628,149 @@ mod windows_tests {
 
         assert_eq!(response, "pong\n");
         server_task.await.expect("server task should complete");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Debug, Default)]
+    struct RecordingSink {
+        times: Arc<std::sync::Mutex<Vec<u64>>>,
+        executed: Arc<std::sync::Mutex<Vec<ScheduledCommand>>>,
+    }
+
+    impl CommandSink for RecordingSink {
+        fn publish_time(&mut self, time: u64) {
+            self.times.lock().unwrap().push(time);
+        }
+
+        fn execute(&mut self, command: &ScheduledCommand) {
+            self.executed.lock().unwrap().push(command.clone());
+        }
+    }
+
+    #[test]
+    fn parse_repl_command_handles_valid_and_invalid_inputs() {
+        // Arrange
+        let valid_cases = vec![
+            (" start  ", ReplCommand::Start),
+            ("stop", ReplCommand::Stop),
+            ("tick", ReplCommand::Tick),
+            ("step 5", ReplCommand::Step(5)),
+            ("advance 42", ReplCommand::Advance(42)),
+            ("run 3", ReplCommand::RunTicks(3)),
+            ("rate 7", ReplCommand::SetRate(7)),
+            (
+                "enqueue 9 launch",
+                ReplCommand::Enqueue(ScheduledCommand {
+                    timestamp: 9,
+                    command: "launch".to_string(),
+                }),
+            ),
+            (
+                "pipe 4:cmd",
+                ReplCommand::PipeLine("4:cmd".to_string()),
+            ),
+            ("now", ReplCommand::Now),
+            ("help", ReplCommand::Help),
+            ("quit", ReplCommand::Quit),
+            ("exit", ReplCommand::Quit),
+        ];
+
+        // Act
+        let parsed_valid: Vec<_> = valid_cases
+            .iter()
+            .map(|(input, _)| parse_repl_command(input).unwrap())
+            .collect();
+
+        // Assert
+        for ((_, expected), actual) in valid_cases.into_iter().zip(parsed_valid) {
+            assert_eq!(actual, expected);
+        }
+
+        // Arrange
+        let invalid_cases = vec![
+            ("", "empty input"),
+            ("unknown", "unknown command 'unknown'"),
+            ("step x", "usage: step <non-negative delta>"),
+            ("advance", "usage: advance <target timestamp>"),
+            ("run -1", "usage: run <number of ticks>"),
+            ("rate 0", "tick rate must be greater than zero"),
+            ("enqueue 5", "usage: enqueue <timestamp> <command>"),
+            ("pipe  ", "usage: pipe <timestamp:command>"),
+        ];
+
+        // Act & Assert
+        for (input, expected_message) in invalid_cases {
+            let error = parse_repl_command(input).expect_err("case should fail");
+            assert_eq!(error, expected_message);
+        }
+    }
+
+    #[tokio::test]
+    async fn tick_loop_respects_ticker_state() {
+        // Arrange
+        let sink = RecordingSink::default();
+        let times = sink.times.clone();
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::new(sink)));
+        let (tick_sender, tick_receiver) = watch::channel(false);
+        let interval = Duration::from_millis(5);
+        let tick_task = tokio::spawn(tick_loop(dispatcher.clone(), tick_receiver, interval));
+
+        // Act
+        tokio::time::sleep(Duration::from_millis(12)).await;
+        tick_sender.send_replace(true);
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        tick_sender.send_replace(false);
+        drop(tick_sender);
+        tick_task.await.expect("tick loop should exit cleanly");
+
+        // Assert
+        let recorded_times = times.lock().unwrap().clone();
+        assert!(recorded_times.len() >= 3, "expected multiple ticks while enabled");
+        assert!(recorded_times.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    #[tokio::test]
+    async fn queue_forwarder_applies_pipe_events() {
+        // Arrange
+        let sink = RecordingSink::default();
+        let times = sink.times.clone();
+        let executed = sink.executed.clone();
+        let dispatcher = Arc::new(Mutex::new(Dispatcher::new_with_tick_rate(sink, 0, 2)));
+        let (pipe_sender, pipe_receiver) = mpsc::channel(8);
+        let (tick_sender, tick_receiver) = watch::channel(false);
+        let forwarder = tokio::spawn(queue_forwarder(
+            dispatcher.clone(),
+            pipe_receiver,
+            tick_sender,
+        ));
+
+        // Act
+        pipe_sender
+            .send(PipeEvent::Scheduled(ScheduledCommand {
+                timestamp: 2,
+                command: "mission".to_string(),
+            }))
+            .await
+            .unwrap();
+        pipe_sender.send(PipeEvent::Start).await.unwrap();
+        pipe_sender.send(PipeEvent::Tick).await.unwrap();
+        pipe_sender.send(PipeEvent::Step(3)).await.unwrap();
+        pipe_sender.send(PipeEvent::Advance(10)).await.unwrap();
+        pipe_sender.send(PipeEvent::RunTicks(1)).await.unwrap();
+        pipe_sender.send(PipeEvent::Stop).await.unwrap();
+        drop(pipe_sender);
+        forwarder.await.expect("forwarder should complete");
+
+        // Assert
+        assert!(!*tick_receiver.borrow(), "ticking should be disabled after stop");
+        let recorded_times = times.lock().unwrap().clone();
+        let recorded_executed = executed.lock().unwrap().clone();
+        assert_eq!(recorded_times, vec![2, 5, 10, 12]);
+        assert_eq!(recorded_executed.len(), 1);
+        assert_eq!(recorded_executed[0].command, "mission");
     }
 }
