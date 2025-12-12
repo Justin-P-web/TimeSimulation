@@ -15,9 +15,16 @@ use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time;
 
 #[cfg(windows)]
-use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::io::{AsyncWriteExt, BufWriter, ReadHalf, WriteHalf, split};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ClientOptions;
+
+#[cfg(windows)]
+type PipeClient = tokio::net::windows::named_pipe::NamedPipeClient;
+#[cfg(windows)]
+type PipeReadHalf = ReadHalf<PipeClient>;
+#[cfg(windows)]
+type PipeWriteHalf = WriteHalf<PipeClient>;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, ValueEnum)]
 enum TransportMode {
@@ -177,7 +184,7 @@ async fn queue_forwarder(
 
 #[cfg(windows)]
 async fn forward_repl_line(
-    writer: &mut BufWriter<tokio::net::windows::named_pipe::NamedPipeClient>,
+    writer: &mut BufWriter<PipeWriteHalf>,
     line: &str,
 ) -> anyhow::Result<()> {
     writer.write_all(line.as_bytes()).await?;
@@ -288,14 +295,15 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
 async fn run_pipe_client(args: &Args) -> anyhow::Result<()> {
     println!("connecting to dispatcher pipe at {}", args.pipe_endpoint);
     let client = ClientOptions::new().open(&args.pipe_endpoint)?;
-    let (read_half, write_half) = client.into_split();
+    let (read_half, write_half) = split(client);
     let mut writer = BufWriter::new(write_half);
 
-    let mut output_reader: BufReader<tokio::net::windows::named_pipe::NamedPipeClient> =
+    let mut output_reader: BufReader<PipeReadHalf> =
         if let Some(output_endpoint) = args.pipe_output_endpoint.as_ref() {
             println!("attaching to output pipe at {output_endpoint}");
             let output_client = ClientOptions::new().open(output_endpoint)?;
-            BufReader::new(output_client)
+            let (output_read_half, _) = split(output_client);
+            BufReader::new(output_read_half)
         } else {
             BufReader::new(read_half)
         };
@@ -363,4 +371,63 @@ async fn main() -> anyhow::Result<()> {
     run_local_client(&args).await?;
 
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::windows::named_pipe::ServerOptions;
+
+    #[tokio::test]
+    async fn pipe_client_can_split_and_exchange_messages() {
+        let pipe_name = format!(
+            r"\\\\.\\pipe\\timesimulation-client-test-{}",
+            std::process::id()
+        );
+        let server = ServerOptions::new()
+            .first_pipe_instance(true)
+            .create(&pipe_name)
+            .expect("server pipe should create");
+
+        let server_task = tokio::spawn(async move {
+            let mut server = server;
+            server
+                .connect()
+                .await
+                .expect("server should accept connection");
+
+            let mut received = [0u8; 5];
+            server
+                .read_exact(&mut received)
+                .await
+                .expect("server should read client message");
+            assert_eq!(&received, b"ping\n");
+
+            server
+                .write_all(b"pong\n")
+                .await
+                .expect("server should respond");
+        });
+
+        let client = ClientOptions::new()
+            .open(&pipe_name)
+            .expect("client should connect to server pipe");
+        let (read_half, write_half) = split(client);
+        let mut writer = BufWriter::new(write_half);
+
+        forward_repl_line(&mut writer, "ping")
+            .await
+            .expect("client should send message");
+
+        let mut reader = BufReader::new(read_half);
+        let mut response = String::new();
+        reader
+            .read_line(&mut response)
+            .await
+            .expect("client should read server response");
+
+        assert_eq!(response, "pong\n");
+        server_task.await.expect("server task should complete");
+    }
 }

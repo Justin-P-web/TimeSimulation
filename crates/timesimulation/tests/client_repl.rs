@@ -67,7 +67,11 @@ fn connecting_and_starting_dispatcher_executes_enqueued_commands() {
             .iter()
             .map(|cmd| (cmd.timestamp, cmd.command.clone()))
             .collect::<Vec<_>>(),
-        vec![(1, "first".to_string()), (2, "pending".to_string()), (3, "second".to_string())],
+        vec![
+            (1, "first".to_string()),
+            (2, "pending".to_string()),
+            (3, "second".to_string())
+        ],
     );
 }
 
