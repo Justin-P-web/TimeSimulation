@@ -107,6 +107,12 @@ impl<Sink: CommandSink> Dispatcher<Sink> {
         self.clock.now()
     }
 
+    /// Publishes the current simulated time to the sink and executes any
+    /// commands scheduled at or before that timestamp.
+    ///
+    /// This helper is invoked after every clock advancement method to ensure
+    /// the sink observes monotonically increasing time updates and that queued
+    /// commands are drained in order without skipping equal timestamps.
     fn publish_and_dispatch(&mut self) {
         let now = self.clock.now();
         self.sink.publish_time(now);
