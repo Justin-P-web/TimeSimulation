@@ -69,7 +69,10 @@ Available REPL commands:
 
 ## Demo binaries
 The `demo` crate offers two minimal examples:
-- `demo`: On non-Windows targets it queues a `2:demo-command` instruction and a `3:scale-time` instruction (which multiplies the timestamp by four when executing) and runs four ticks to execute both. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue.
+- `demo`: On non-Windows targets it queues a `2:demo-command` instruction and a `3:scale-time` instruction (which multiplies the timestamp by four when executing) and runs four ticks to execute both. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue. The Windows listener also accepts control lines to steer ticking without recompiling:
+  - `start` / `stop`: Resume or pause ticking after enqueues.
+  - `rate:<n>`: Update the dispatcher tick rate to `<n>` (must be non-zero).
+  - `pipe:<name>`: Disconnect and start listening on a new named pipe `<name>`.
 - `wait-for-start` (Windows only): Buffers incoming `timestamp:command` lines until a `start` message arrives, then ticks after every enqueue.
 
 Run the standard demo from the workspace root:
