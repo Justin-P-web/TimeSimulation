@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
+use timesimulation::windows_pipe::PipeMessage;
 use timesimulation::{CommandSink, Dispatcher, ScheduledCommand, parse_pipe_line};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
@@ -200,11 +201,13 @@ async fn tick_loop(
 
 async fn queue_forwarder(
     dispatcher: Arc<Mutex<Dispatcher<StdoutSink>>>,
-    mut receiver: mpsc::Receiver<ScheduledCommand>,
+    mut receiver: mpsc::Receiver<PipeMessage>,
 ) {
-    while let Some(command) = receiver.recv().await {
-        let mut guard = dispatcher.lock().await;
-        guard.enqueue(command.timestamp, command.command);
+    while let Some(message) = receiver.recv().await {
+        if let PipeMessage::Command(command) = message {
+            let mut guard = dispatcher.lock().await;
+            guard.enqueue(command.timestamp, command.command);
+        }
     }
 }
 
@@ -312,7 +315,11 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
                 println!("tick rate updated to {rate}");
             }
             ReplCommand::Enqueue(command) => {
-                if command_sender.send(command).await.is_err() {
+                if command_sender
+                    .send(PipeMessage::Command(command))
+                    .await
+                    .is_err()
+                {
                     eprintln!("command queue unavailable");
                 }
             }
@@ -322,7 +329,11 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
                         timestamp: parsed.timestamp,
                         command: parsed.command,
                     };
-                    if command_sender.send(scheduled).await.is_err() {
+                    if command_sender
+                        .send(PipeMessage::Command(scheduled))
+                        .await
+                        .is_err()
+                    {
                         eprintln!("command queue unavailable");
                     }
                 }
