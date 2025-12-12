@@ -9,7 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
-use timesimulation::windows_pipe::PipeMessage;
+use timesimulation::windows_pipe::PipeEvent;
 use timesimulation::{CommandSink, Dispatcher, ScheduledCommand, parse_pipe_line};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
@@ -201,12 +201,23 @@ async fn tick_loop(
 
 async fn queue_forwarder(
     dispatcher: Arc<Mutex<Dispatcher<StdoutSink>>>,
-    mut receiver: mpsc::Receiver<PipeMessage>,
+    mut receiver: mpsc::Receiver<PipeEvent>,
+    tick_sender: watch::Sender<bool>,
 ) {
     while let Some(message) = receiver.recv().await {
-        if let PipeMessage::Command(command) = message {
-            let mut guard = dispatcher.lock().await;
-            guard.enqueue(command.timestamp, command.command);
+        match message {
+            PipeEvent::Scheduled(command) => {
+                let mut guard = dispatcher.lock().await;
+                guard.enqueue(command.timestamp, command.command);
+            }
+            PipeEvent::Start => {
+                let _ = tick_sender.send(true);
+                println!("ticking started (pipe)");
+            }
+            PipeEvent::Stop | PipeEvent::Pause | PipeEvent::Disconnected => {
+                let _ = tick_sender.send(false);
+                println!("ticking stopped (pipe)");
+            }
         }
     }
 }
@@ -240,14 +251,19 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
         args.tick_rate,
     )));
 
-    let (command_sender, command_receiver) = mpsc::channel(64);
-    let dispatcher_for_queue = dispatcher.clone();
-    tokio::spawn(queue_forwarder(dispatcher_for_queue, command_receiver));
-
     let (tick_sender, tick_receiver) = watch::channel(false);
     let dispatcher_for_tick = dispatcher.clone();
     let tick_interval = Duration::from_millis(args.interval_ms);
     tokio::spawn(tick_loop(dispatcher_for_tick, tick_receiver, tick_interval));
+
+    let (command_sender, command_receiver) = mpsc::channel(64);
+    let dispatcher_for_queue = dispatcher.clone();
+    let tick_sender_for_queue = tick_sender.clone();
+    tokio::spawn(queue_forwarder(
+        dispatcher_for_queue,
+        command_receiver,
+        tick_sender_for_queue,
+    ));
 
     #[cfg(windows)]
     if let Some(pipe_name) = args.pipe_name.clone() {
@@ -316,7 +332,7 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
             }
             ReplCommand::Enqueue(command) => {
                 if command_sender
-                    .send(PipeMessage::Command(command))
+                    .send(PipeEvent::Scheduled(command))
                     .await
                     .is_err()
                 {
@@ -330,7 +346,7 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
                         command: parsed.command,
                     };
                     if command_sender
-                        .send(PipeMessage::Command(scheduled))
+                        .send(PipeEvent::Scheduled(scheduled))
                         .await
                         .is_err()
                     {

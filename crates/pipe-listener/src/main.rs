@@ -48,12 +48,12 @@ struct Args {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     use std::sync::Arc;
-    use timesimulation::windows_pipe::{PipeMessage, PipeTickControl, listen_for_pipe_commands};
+    use timesimulation::windows_pipe::{listen_for_pipe_commands, PipeEvent};
     use tokio::sync::{Mutex, mpsc};
     use tokio::time::{self, Duration};
 
     let args = Args::parse();
-    let (tx, mut rx) = mpsc::channel::<PipeMessage>(32);
+    let (tx, mut rx) = mpsc::channel::<PipeEvent>(32);
     let pipe_name = args.pipe_name.clone();
     tokio::spawn(async move {
         if let Err(err) = listen_for_pipe_commands(&pipe_name, tx).await {
@@ -73,14 +73,14 @@ async fn main() -> anyhow::Result<()> {
         tokio::select! {
             Some(message) = rx.recv() => {
                 match message {
-                    PipeMessage::Command(cmd) => {
+                    PipeEvent::Scheduled(cmd) => {
                         let mut dispatcher = dispatcher.lock().await;
                         dispatcher.enqueue(cmd.timestamp, cmd.command);
                     }
-                    PipeMessage::Control(PipeTickControl::Start) => {
+                    PipeEvent::Start => {
                         ticking = true;
                     }
-                    PipeMessage::Control(PipeTickControl::Stop) => {
+                    PipeEvent::Stop | PipeEvent::Pause | PipeEvent::Disconnected => {
                         ticking = false;
                     }
                 }
