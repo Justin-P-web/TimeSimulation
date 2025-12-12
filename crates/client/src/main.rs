@@ -98,6 +98,13 @@ enum ReplCommand {
     Quit,
 }
 
+/// Parses a raw REPL line into a structured command understood by the client.
+///
+/// Leading and trailing whitespace are ignored, and both long and abbreviated
+/// command names are accepted where available. Each subcommand validates its
+/// required numeric arguments and returns a descriptive usage error when
+/// parsing fails or when the input is empty. Unknown commands are surfaced as
+/// errors so the caller can report them to the user.
 fn parse_repl_command(line: &str) -> Result<ReplCommand, String> {
     let trimmed = line.trim();
     if trimmed.is_empty() {
@@ -176,6 +183,11 @@ fn parse_repl_command(line: &str) -> Result<ReplCommand, String> {
     }
 }
 
+/// Advances the dispatcher on a fixed interval while ticking is enabled.
+///
+/// The loop wakes at the provided interval and performs a tick when the watch
+/// channel indicates ticking is active. When the sender side of the watch
+/// channel is dropped the loop exits, allowing graceful shutdown.
 async fn tick_loop(
     dispatcher: Arc<Mutex<Dispatcher<StdoutSink>>>,
     mut ticker: watch::Receiver<bool>,
@@ -199,6 +211,13 @@ async fn tick_loop(
     }
 }
 
+/// Consumes events from the pipe listener and applies them to the dispatcher
+/// or ticking control channel.
+///
+/// This task serializes dispatcher access to ensure commands and clock updates
+/// occur in order. Sender errors are ignored after printing because they imply
+/// the receiver has gone away. Pipe disconnections disable ticking but do not
+/// terminate the forwarder, letting future messages resume work.
 async fn queue_forwarder(
     dispatcher: Arc<Mutex<Dispatcher<StdoutSink>>>,
     mut receiver: mpsc::Receiver<PipeEvent>,
@@ -256,6 +275,12 @@ async fn queue_forwarder(
 }
 
 #[cfg(windows)]
+/// Sends a single REPL command line to the remote pipe writer with a newline
+/// terminator.
+///
+/// The writer is flushed after each line so interactive users see responses
+/// promptly. Write errors are propagated to allow the caller to reconnect or
+/// exit when the pipe is no longer available.
 async fn forward_repl_line(
     writer: &mut BufWriter<PipeWriteHalf>,
     line: &str,
@@ -267,6 +292,13 @@ async fn forward_repl_line(
 }
 
 #[cfg(windows)]
+/// Converts a local REPL command into the string format expected by the remote
+/// pipe server.
+///
+/// Commands that only affect the local client (help/quit) return `None` so the
+/// caller can handle them without sending anything. All other commands are
+/// encoded using the dispatcher pipe syntax or control verbs accepted by the
+/// server.
 fn serialize_repl_command(command: &ReplCommand) -> Option<String> {
     match command {
         ReplCommand::Start => Some("start".to_string()),
@@ -283,6 +315,8 @@ fn serialize_repl_command(command: &ReplCommand) -> Option<String> {
     }
 }
 
+/// Prints the interactive command reference for the client, including pipe
+/// helpers and Windows-only controls.
 fn print_help() {
     println!(
         r#"available commands:
@@ -313,6 +347,13 @@ windows named pipe controls (when a listener is active on Windows):
     );
 }
 
+/// Runs the REPL client in local mode, executing commands directly against an
+/// in-process dispatcher.
+///
+/// Validates that the tick rate is non-zero before starting and spawns helper
+/// tasks for ticking and pipe event forwarding. All user commands are handled
+/// until EOF or a quit command. Errors initializing the dispatcher or reading
+/// stdin propagate to the caller.
 async fn run_local_client(args: &Args) -> anyhow::Result<()> {
     if args.tick_rate == 0 {
         anyhow::bail!("tick rate must be greater than zero");
@@ -443,6 +484,13 @@ async fn run_local_client(args: &Args) -> anyhow::Result<()> {
 }
 
 #[cfg(windows)]
+/// Connects to a remote dispatcher over Windows named pipes and forwards REPL
+/// commands to it.
+///
+/// The function establishes a bidirectional pipe connection, optionally
+/// attaching a second pipe for server output, and then relays user commands
+/// until the connection fails or the user quits. Connection and write errors
+/// are surfaced so the caller can report them.
 async fn run_pipe_client(args: &Args) -> anyhow::Result<()> {
     println!("connecting to dispatcher pipe at {}", args.pipe_endpoint);
     let client = ClientOptions::new().open(&args.pipe_endpoint)?;
@@ -499,6 +547,13 @@ async fn run_pipe_client(args: &Args) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Entry point that selects the transport mode and launches the interactive
+/// client.
+///
+/// On Windows the mode can be toggled between local and pipe-backed operation;
+/// other platforms always use local mode. Argument parsing errors are reported
+/// by clap before reaching this function, and any runtime failures from the
+/// selected client bubble up to terminate the process with an error.
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();

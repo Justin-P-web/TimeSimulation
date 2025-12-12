@@ -94,6 +94,21 @@ pub async fn listen_for_pipe_commands(
 }
 
 #[cfg(windows)]
+/// Reads newline-delimited control and scheduling instructions from a named
+/// pipe client and forwards parsed events to the dispatcher channel.
+///
+/// The reader is consumed until it disconnects or the receiver channel is
+/// closed. Invalid control instructions and malformed scheduler entries are
+/// logged but do not terminate the loop, ensuring later well-formed commands
+/// still flow through. When the client disconnects a `Disconnected` event is
+/// emitted.
+///
+/// # Errors
+/// Returns an [`io::Error`] if reading from the pipe fails or yields an error
+/// while awaiting the next line. Errors sending on the channel are treated as a
+/// signal that the receiver has shut down and end processing without
+/// propagating an error.
+#[cfg(windows)]
 async fn forward_commands<R>(reader: &mut R, sender: &mut Sender<PipeEvent>) -> io::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -147,6 +162,20 @@ where
     Ok(())
 }
 
+#[cfg(windows)]
+/// Attempts to parse a control instruction emitted by a Windows pipe client.
+///
+/// The parser first accepts JSON control objects (e.g. `{ "type": "start" }`)
+/// and then falls back to a space- or colon-delimited shorthand such as
+/// `rate 2` or `tick`. Unknown commands produce `Ok(None)` so the caller can
+/// treat the input as a scheduler line instead. Numeric parameters must fit in
+/// `u64`; rate updates are validated to reject zeros to prevent a stalled
+/// dispatcher.
+///
+/// # Errors
+/// Returns a formatted usage error when numeric parsing fails or when a zero
+/// tick rate is provided. Serde JSON parsing errors are ignored so other
+/// syntaxes can be attempted.
 #[cfg(windows)]
 fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String> {
     if let Ok(instruction) = serde_json::from_str::<JsonControlInstruction>(line) {
