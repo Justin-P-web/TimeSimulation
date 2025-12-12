@@ -41,7 +41,9 @@ pub struct SimulationClient {
 
 impl SimulationClient {
     /// Creates a client that owns an in-memory dispatcher for direct testing.
-    pub fn from_dispatcher<Sink: CommandSink + Send + 'static>(dispatcher: Dispatcher<Sink>) -> Self {
+    pub fn from_dispatcher<Sink: CommandSink + Send + 'static>(
+        dispatcher: Dispatcher<Sink>,
+    ) -> Self {
         Self {
             transport: Box::new(InMemoryTransport::new(dispatcher)),
         }
