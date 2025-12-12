@@ -44,9 +44,28 @@ impl From<ScheduledCommand> for PipeEvent {
 #[cfg(windows)]
 use crate::pipe::parse_pipe_line;
 #[cfg(windows)]
+use serde::Deserialize;
+#[cfg(windows)]
+use serde_json;
+#[cfg(windows)]
 use tokio::io::{AsyncBufReadExt, BufReader};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ServerOptions;
+
+#[cfg(windows)]
+#[derive(Debug, Deserialize)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum JsonControlInstruction {
+    Start,
+    Stop,
+    Pause,
+    Tick,
+    Run { ticks: u64 },
+    Step { delta: u64 },
+    Advance { target: u64 },
+    Now,
+    Rate { rate: u64 },
+}
 
 /// Spawns a listener that accepts pipe clients and forwards parsed commands to
 /// the provided scheduler channel.
@@ -130,6 +149,27 @@ where
 
 #[cfg(windows)]
 fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String> {
+    if let Ok(instruction) = serde_json::from_str::<JsonControlInstruction>(line) {
+        let event = match instruction {
+            JsonControlInstruction::Start => PipeEvent::Start,
+            JsonControlInstruction::Stop => PipeEvent::Stop,
+            JsonControlInstruction::Pause => PipeEvent::Pause,
+            JsonControlInstruction::Tick => PipeEvent::Tick,
+            JsonControlInstruction::Run { ticks } => PipeEvent::RunTicks(ticks),
+            JsonControlInstruction::Step { delta } => PipeEvent::Step(delta),
+            JsonControlInstruction::Advance { target } => PipeEvent::Advance(target),
+            JsonControlInstruction::Now => PipeEvent::Now,
+            JsonControlInstruction::Rate { rate } => {
+                if rate == 0 {
+                    return Err("tick rate must be greater than zero".to_string());
+                }
+                PipeEvent::SetRate(rate)
+            }
+        };
+
+        return Ok(Some(event));
+    }
+
     let (command, rest) = match line.splitn(2, ' ').collect::<Vec<_>>().as_slice() {
         [command, rest] => (command.to_ascii_lowercase(), rest.trim()),
         [command] => match command.split_once(':') {
