@@ -247,6 +247,66 @@ fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String> {
     Ok(parsed)
 }
 
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use tokio::io::AsyncWriteExt;
+
+    #[test]
+    fn parse_control_instruction_supports_json_and_shorthand() {
+        // Arrange
+        let json_input = "{\"type\":\"rate\",\"rate\":5}";
+        let shorthand_tick = "tick";
+        let invalid_rate = "rate 0";
+
+        // Act
+        let parsed_json = parse_control_instruction(json_input).unwrap();
+        let parsed_tick = parse_control_instruction(shorthand_tick).unwrap();
+        let rate_error = parse_control_instruction(invalid_rate).unwrap_err();
+
+        // Assert
+        assert_eq!(parsed_json, Some(PipeEvent::SetRate(5)));
+        assert_eq!(parsed_tick, Some(PipeEvent::Tick));
+        assert_eq!(rate_error, "tick rate must be greater than zero");
+    }
+
+    #[tokio::test]
+    async fn forward_commands_emits_control_and_schedule_events() {
+        // Arrange
+        let (mut writer, mut reader) = tokio::io::duplex(128);
+        let (mut sender, mut receiver) = tokio::sync::mpsc::channel(4);
+        let forwarder = tokio::spawn(async move { forward_commands(&mut reader, &mut sender).await });
+
+        // Act
+        writer
+            .write_all(b"{\"type\":\"start\"}\nstep 3\n4:launch\n")
+            .await
+            .unwrap();
+        writer.shutdown().await.unwrap();
+        let mut events = Vec::new();
+        while let Some(event) = receiver.recv().await {
+            events.push(event);
+            if events.len() == 3 {
+                break;
+            }
+        }
+        forwarder.await.expect("forwarder should finish").unwrap();
+
+        // Assert
+        assert_eq!(
+            events,
+            vec![
+                PipeEvent::Start,
+                PipeEvent::Step(3),
+                PipeEvent::Scheduled(ScheduledCommand {
+                    timestamp: 4,
+                    command: "launch".to_string(),
+                }),
+            ]
+        );
+    }
+}
+
 /// Stub implementation used on non-Windows targets to keep the crate
 /// cross-platform. Calling this function outside Windows returns an error at
 /// runtime.
