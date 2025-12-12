@@ -92,6 +92,24 @@ The `demo` crate offers two minimal examples:
   - `pipe:<name>`: Disconnect and start listening on a new named pipe `<name>`.
 - `wait-for-start` (Windows only): Buffers incoming `timestamp:command` lines until a `start` message arrives, then ticks after every enqueue.
 
+### Controlling demos from the client (Windows only)
+Pipe transport is only available on Windows. Start the demo binary (listening on `\\.\\pipe\\timesimulation-demo`) or the wait-for-start binary (`\\.\\pipe\\timesimulation-wait-for-start`) so they are ready for pipe connections:
+
+```bash
+cargo run -p demo --target x86_64-pc-windows-msvc
+cargo run -p demo --bin wait-for-start --target x86_64-pc-windows-msvc
+```
+
+In a separate shell, run the client in pipe mode and point it at the matching endpoint. You can also attach to a secondary output pipe if the server exposes one:
+
+```bash
+cargo run -p client -- --mode pipe --pipe-endpoint \\.\\pipe\\timesimulation-demo
+# or, with an output channel
+cargo run -p client -- --mode pipe --pipe-endpoint \\.\\pipe\\timesimulation-demo --pipe-output-endpoint \\.\\pipe\\timesimulation-demo-output
+```
+
+After the client reports the connection, send dispatcher commands to verify the link. For example, issue `now`, `start`, or `tick` to confirm responses are flowing between the REPL and the demo listener.
+
 Run the standard demo from the workspace root:
 
 ```bash
