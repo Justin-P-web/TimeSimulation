@@ -177,7 +177,7 @@ where
 /// tick rate is provided. Serde JSON parsing errors are ignored so other
 /// syntaxes can be attempted.
 #[cfg(windows)]
-fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String> {
+pub fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String> {
     if let Ok(instruction) = serde_json::from_str::<JsonControlInstruction>(line) {
         let event = match instruction {
             JsonControlInstruction::Start => PipeEvent::Start,
