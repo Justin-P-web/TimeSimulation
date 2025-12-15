@@ -9,6 +9,9 @@
 use timesimulation::{CommandSink, Dispatcher, ScheduledCommand};
 
 #[cfg(windows)]
+use timesimulation::windows_pipe::{PipeEvent, parse_control_instruction};
+
+#[cfg(windows)]
 use anyhow::Result;
 
 #[cfg(windows)]
@@ -133,7 +136,7 @@ async fn main() -> Result<()> {
 
         server.connect().await?;
         println!(
-            "client attached; send 'start', 'stop', 'rate:<n>', 'pipe:<name>', or timestamp commands"
+            "client attached; send dispatcher controls (start/stop/tick/step/advance/run/rate/now) or timestamp commands"
         );
 
         let reader = BufReader::new(server);
@@ -145,32 +148,7 @@ async fn main() -> Result<()> {
                 continue;
             }
 
-            let lower = trimmed.to_ascii_lowercase();
-
-            if lower == "start" {
-                ticking = true;
-                println!("ticking resumed; enqueueing will trigger ticks");
-                continue;
-            }
-
-            if lower == "stop" {
-                ticking = false;
-                println!("ticking paused; commands will queue until 'start'");
-                continue;
-            }
-
-            if let Some(rest) = lower.strip_prefix("rate:") {
-                match rest.parse::<u64>() {
-                    Ok(rate) if rate > 0 => {
-                        dispatcher.set_tick_rate(rate);
-                        println!("tick rate updated to {rate}");
-                    }
-                    _ => eprintln!("invalid rate control command: '{trimmed}'"),
-                }
-                continue;
-            }
-
-            if let Some(rest) = lower.strip_prefix("pipe:") {
+            if let Some(rest) = trimmed.to_ascii_lowercase().strip_prefix("pipe:") {
                 let target = rest.trim();
                 if target.is_empty() {
                     eprintln!("pipe control requires a name after 'pipe:'");
@@ -180,6 +158,56 @@ async fn main() -> Result<()> {
                 pipe_name = target.to_string();
                 println!("switching to new pipe name: {pipe_name}");
                 break;
+            }
+
+            match parse_control_instruction(trimmed) {
+                Ok(Some(PipeEvent::Start)) => {
+                    ticking = true;
+                    println!("ticking resumed; enqueueing will trigger ticks");
+                    continue;
+                }
+                Ok(Some(PipeEvent::Stop | PipeEvent::Pause | PipeEvent::Disconnected)) => {
+                    ticking = false;
+                    println!("ticking paused; commands will queue until 'start'");
+                    continue;
+                }
+                Ok(Some(PipeEvent::Tick)) => {
+                    dispatcher.tick();
+                    println!("executed single tick");
+                    continue;
+                }
+                Ok(Some(PipeEvent::Step(delta))) => {
+                    dispatcher.step(delta);
+                    println!("advanced clock by {delta}");
+                    continue;
+                }
+                Ok(Some(PipeEvent::Advance(target))) => {
+                    dispatcher.advance_to(target);
+                    println!("advanced clock to {target}");
+                    continue;
+                }
+                Ok(Some(PipeEvent::RunTicks(ticks))) => {
+                    dispatcher.run_for_ticks(ticks);
+                    println!("ran {ticks} tick(s)");
+                    continue;
+                }
+                Ok(Some(PipeEvent::SetRate(rate))) => {
+                    dispatcher.set_tick_rate(rate);
+                    println!("tick rate updated to {rate}");
+                    continue;
+                }
+                Ok(Some(PipeEvent::Now)) => {
+                    println!("[sim-time] {}", dispatcher.now());
+                    continue;
+                }
+                Ok(Some(PipeEvent::Scheduled(_))) => {
+                    // Forward scheduling commands through the standard pipe parser below.
+                }
+                Ok(None) => {}
+                Err(err) => {
+                    eprintln!("failed to parse control instruction '{trimmed}': {err}");
+                    continue;
+                }
             }
 
             match dispatcher.enqueue_from_pipe(trimmed) {
