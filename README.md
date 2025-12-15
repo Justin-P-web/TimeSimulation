@@ -104,9 +104,12 @@ In a separate shell, run the client in pipe mode and point it at the matching en
 
 ```bash
 cargo run -p client -- --mode pipe --pipe-endpoint \\.\\pipe\\timesimulation-demo
-# or, with an output channel
+# or, with an output channel exposed by the demo server
 cargo run -p client -- --mode pipe --pipe-endpoint \\.\\pipe\\timesimulation-demo --pipe-output-endpoint \\.\\pipe\\timesimulation-demo-output
 ```
+
+The Windows demo creates a companion output pipe automatically using the `-output` suffix (for example, `\\.\\pipe\\timesimulation-demo-output`).
+Attach the client with `--pipe-output-endpoint` to receive log lines and dispatcher events over the secondary channel while sending control commands through the primary pipe.
 
 After the client reports the connection, send dispatcher commands to verify the link. For example, issue `now`, `start`, or `tick` to confirm responses are flowing between the REPL and the demo listener.
 
