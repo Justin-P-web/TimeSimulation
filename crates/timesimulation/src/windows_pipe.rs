@@ -46,13 +46,19 @@ use crate::pipe::parse_pipe_line;
 #[cfg(windows)]
 use serde::{Deserialize, Serialize};
 #[cfg(windows)]
+use rmp_serde;
+#[cfg(windows)]
 use serde_json;
 #[cfg(windows)]
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::AsyncReadExt;
 #[cfg(windows)]
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::ServerOptions;
+#[cfg(windows)]
+use tokio_util::bytes::BytesMut;
+#[cfg(windows)]
+use tokio_util::codec::{Decoder, LengthDelimitedCodec};
 
 #[cfg(windows)]
 #[derive(Debug, Deserialize)]
@@ -124,6 +130,16 @@ enum ControlParseError {
     Other(String),
 }
 
+#[cfg(windows)]
+const MAX_MESSAGEPACK_FRAME_LEN: usize = 1024 * 1024;
+
+#[cfg(windows)]
+enum FrameHandling {
+    NotHandled,
+    Continue,
+    Break,
+}
+
 /// Spawns a listener that accepts pipe clients and forwards parsed commands to
 /// the provided scheduler channel.
 ///
@@ -177,76 +193,102 @@ where
     R: AsyncRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    let reader = BufReader::new(reader);
-    let mut lines = reader.lines();
+    let mut buffer = BytesMut::with_capacity(4096);
+    let mut codec = LengthDelimitedCodec::builder()
+        .length_field_length(4)
+        .max_frame_length(MAX_MESSAGEPACK_FRAME_LEN)
+        .new_codec();
 
     loop {
-        match lines.next_line().await? {
-            Some(line) => {
-                let trimmed = line.trim();
-                match parse_control_instruction(trimmed) {
-                    Ok(ControlParseResult::Event(Some(event))) => {
-                        if sender.send(event).await.is_err() {
-                            break;
-                        }
-                        continue;
-                    }
-                    Ok(ControlParseResult::Event(None)) => {}
-                    Ok(ControlParseResult::JsonRpc { id, event }) => {
-                        if sender.send(event).await.is_err() {
-                            break;
-                        }
-                        if let Some(id) = id {
-                            let response = JsonRpcSuccessResponse {
-                                jsonrpc: "2.0",
-                                id,
-                                result: "ok",
-                            };
-                            write_jsonrpc_response(writer, response).await?;
-                        }
-                        continue;
-                    }
-                    Err(ControlParseError::JsonRpc(detail, id)) => {
-                        let response = JsonRpcErrorResponse {
-                            jsonrpc: "2.0",
-                            id: id.unwrap_or(serde_json::Value::Null),
-                            error: JsonRpcError {
-                                code: detail.code,
-                                message: detail.message,
-                                data: detail.data,
-                            },
-                        };
-                        write_jsonrpc_response(writer, response).await?;
-                        continue;
-                    }
-                    Err(ControlParseError::Other(err)) => {
-                        eprintln!("failed to parse control instruction '{line}': {err}");
-                        continue;
-                    }
-                }
+        match try_handle_messagepack_frame(&mut codec, &mut buffer, writer, sender).await? {
+            FrameHandling::Break => break,
+            FrameHandling::Continue => continue,
+            FrameHandling::NotHandled => {}
+        }
 
-                match parse_pipe_line(trimmed) {
-                    Ok(parsed) => {
-                        if sender
-                            .send(PipeEvent::Scheduled(ScheduledCommand {
-                                timestamp: parsed.timestamp,
-                                command: parsed.command,
-                            }))
-                            .await
-                            .is_err()
-                        {
-                            break;
-                        }
-                    }
-                    Err(err) => {
-                        eprintln!("failed to parse pipe line '{line}': {err}");
-                    }
-                }
-            }
-            None => {
+        if messagepack_frame_pending(&buffer) {
+            let read = reader.read_buf(&mut buffer).await?;
+            if read == 0 {
                 let _ = sender.send(PipeEvent::Disconnected).await;
                 return Ok(());
             }
+            continue;
+        }
+
+        if let Some(line_result) = try_extract_line(&mut buffer) {
+            let line = match line_result {
+                Ok(line) => line,
+                Err(err) => {
+                    eprintln!("{err}");
+                    continue;
+                }
+            };
+            let trimmed = line.trim();
+            match parse_control_instruction(trimmed) {
+                Ok(ControlParseResult::Event(Some(event))) => {
+                    if sender.send(event).await.is_err() {
+                        break;
+                    }
+                    continue;
+                }
+                Ok(ControlParseResult::Event(None)) => {}
+                Ok(ControlParseResult::JsonRpc { id, event }) => {
+                    if sender.send(event).await.is_err() {
+                        break;
+                    }
+                    if let Some(id) = id {
+                        let response = JsonRpcSuccessResponse {
+                            jsonrpc: "2.0",
+                            id,
+                            result: "ok",
+                        };
+                        write_jsonrpc_response(writer, response).await?;
+                    }
+                    continue;
+                }
+                Err(ControlParseError::JsonRpc(detail, id)) => {
+                    let response = JsonRpcErrorResponse {
+                        jsonrpc: "2.0",
+                        id: id.unwrap_or(serde_json::Value::Null),
+                        error: JsonRpcError {
+                            code: detail.code,
+                            message: detail.message,
+                            data: detail.data,
+                        },
+                    };
+                    write_jsonrpc_response(writer, response).await?;
+                    continue;
+                }
+                Err(ControlParseError::Other(err)) => {
+                    eprintln!("failed to parse control instruction '{line}': {err}");
+                    continue;
+                }
+            }
+
+            match parse_pipe_line(trimmed) {
+                Ok(parsed) => {
+                    if sender
+                        .send(PipeEvent::Scheduled(ScheduledCommand {
+                            timestamp: parsed.timestamp,
+                            command: parsed.command,
+                        }))
+                        .await
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+                Err(err) => {
+                    eprintln!("failed to parse pipe line '{line}': {err}");
+                }
+            }
+            continue;
+        }
+
+        let read = reader.read_buf(&mut buffer).await?;
+        if read == 0 {
+            let _ = sender.send(PipeEvent::Disconnected).await;
+            return Ok(());
         }
     }
 
@@ -268,6 +310,114 @@ where
 }
 
 #[cfg(windows)]
+async fn try_handle_messagepack_frame<W>(
+    codec: &mut LengthDelimitedCodec,
+    buffer: &mut BytesMut,
+    writer: &mut W,
+    sender: &mut Sender<PipeEvent>,
+) -> io::Result<FrameHandling>
+where
+    W: AsyncWrite + Unpin,
+{
+    let Some(frame) = try_decode_messagepack_frame(codec, buffer)? else {
+        return Ok(FrameHandling::NotHandled);
+    };
+
+    match parse_messagepack_instruction(frame.as_ref()) {
+        Ok(ControlParseResult::Event(Some(event))) => {
+            if sender.send(event).await.is_err() {
+                return Ok(FrameHandling::Break);
+            }
+        }
+        Ok(ControlParseResult::Event(None)) => {
+            eprintln!("unsupported MessagePack payload");
+        }
+        Ok(ControlParseResult::JsonRpc { id, event }) => {
+            if sender.send(event).await.is_err() {
+                return Ok(FrameHandling::Break);
+            }
+            if let Some(id) = id {
+                let response = JsonRpcSuccessResponse {
+                    jsonrpc: "2.0",
+                    id,
+                    result: "ok",
+                };
+                write_jsonrpc_response(writer, response).await?;
+            }
+        }
+        Err(ControlParseError::JsonRpc(detail, id)) => {
+            let response = JsonRpcErrorResponse {
+                jsonrpc: "2.0",
+                id: id.unwrap_or(serde_json::Value::Null),
+                error: JsonRpcError {
+                    code: detail.code,
+                    message: detail.message,
+                    data: detail.data,
+                },
+            };
+            write_jsonrpc_response(writer, response).await?;
+        }
+        Err(ControlParseError::Other(err)) => {
+            eprintln!("failed to parse MessagePack payload: {err}");
+        }
+    }
+
+    Ok(FrameHandling::Continue)
+}
+
+#[cfg(windows)]
+fn try_decode_messagepack_frame(
+    codec: &mut LengthDelimitedCodec,
+    buffer: &mut BytesMut,
+) -> io::Result<Option<BytesMut>> {
+    if buffer.len() < 4 {
+        return Ok(None);
+    }
+
+    let length = u32::from_be_bytes(buffer[..4].try_into().unwrap()) as usize;
+    if length == 0 || length > MAX_MESSAGEPACK_FRAME_LEN {
+        return Ok(None);
+    }
+
+    if buffer.len() < 4 + length {
+        return Ok(None);
+    }
+
+    codec
+        .decode(buffer)
+        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
+}
+
+#[cfg(windows)]
+fn messagepack_frame_pending(buffer: &BytesMut) -> bool {
+    if buffer.len() < 4 {
+        return false;
+    }
+
+    let length = u32::from_be_bytes(buffer[..4].try_into().unwrap()) as usize;
+    if length == 0 || length > MAX_MESSAGEPACK_FRAME_LEN {
+        return false;
+    }
+
+    buffer.len() < 4 + length
+}
+
+#[cfg(windows)]
+fn try_extract_line(buffer: &mut BytesMut) -> Option<Result<String, String>> {
+    let newline = buffer.iter().position(|byte| *byte == b'\n')?;
+    let mut line_bytes = buffer.split_to(newline + 1);
+    line_bytes.truncate(newline);
+    if line_bytes.last() == Some(&b'\r') {
+        line_bytes.truncate(line_bytes.len() - 1);
+    }
+
+    Some(
+        String::from_utf8(line_bytes.to_vec())
+            .map_err(|err| format!("invalid UTF-8 in line: {err}")),
+    )
+}
+
+#[cfg(windows)]
 /// Attempts to parse a control instruction emitted by a Windows pipe client.
 ///
 /// The parser first accepts JSON-RPC requests (e.g.
@@ -285,46 +435,7 @@ where
 #[cfg(windows)]
 pub fn parse_control_instruction(line: &str) -> Result<ControlParseResult, ControlParseError> {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
-        if value.get("jsonrpc").is_some() {
-            let request: JsonRpcRequest = serde_json::from_value(value.clone()).map_err(|err| {
-                ControlParseError::JsonRpc(
-                    JsonRpcErrorDetail {
-                        code: -32600,
-                        message: format!("invalid JSON-RPC request: {err}"),
-                        data: None,
-                    },
-                    value.get("id").cloned(),
-                )
-            })?;
-            let event = parse_jsonrpc_request(&request)?;
-            return Ok(ControlParseResult::JsonRpc {
-                id: request.id,
-                event,
-            });
-        }
-    }
-
-    if let Ok(instruction) = serde_json::from_str::<JsonControlInstruction>(line) {
-        let event = match instruction {
-            JsonControlInstruction::Start => PipeEvent::Start,
-            JsonControlInstruction::Stop => PipeEvent::Stop,
-            JsonControlInstruction::Pause => PipeEvent::Pause,
-            JsonControlInstruction::Tick => PipeEvent::Tick,
-            JsonControlInstruction::Run { ticks } => PipeEvent::RunTicks(ticks),
-            JsonControlInstruction::Step { delta } => PipeEvent::Step(delta),
-            JsonControlInstruction::Advance { target } => PipeEvent::Advance(target),
-            JsonControlInstruction::Now => PipeEvent::Now,
-            JsonControlInstruction::Rate { rate } => {
-                if rate == 0 {
-                    return Err(ControlParseError::Other(
-                        "tick rate must be greater than zero".to_string(),
-                    ));
-                }
-                PipeEvent::SetRate(rate)
-            }
-        };
-
-        return Ok(ControlParseResult::Event(Some(event)));
+        return parse_control_value(value);
     }
 
     let (command, rest) = match line.splitn(2, ' ').collect::<Vec<_>>().as_slice() {
@@ -375,6 +486,60 @@ pub fn parse_control_instruction(line: &str) -> Result<ControlParseResult, Contr
     };
 
     Ok(ControlParseResult::Event(parsed))
+}
+
+#[cfg(windows)]
+fn parse_messagepack_instruction(bytes: &[u8]) -> Result<ControlParseResult, ControlParseError> {
+    let value: serde_json::Value = rmp_serde::from_slice(bytes).map_err(|err| {
+        ControlParseError::Other(format!("invalid MessagePack payload: {err}"))
+    })?;
+    parse_control_value(value)
+}
+
+#[cfg(windows)]
+fn parse_control_value(value: serde_json::Value) -> Result<ControlParseResult, ControlParseError> {
+    if value.get("jsonrpc").is_some() {
+        let request: JsonRpcRequest = serde_json::from_value(value.clone()).map_err(|err| {
+            ControlParseError::JsonRpc(
+                JsonRpcErrorDetail {
+                    code: -32600,
+                    message: format!("invalid JSON-RPC request: {err}"),
+                    data: None,
+                },
+                value.get("id").cloned(),
+            )
+        })?;
+        let event = parse_jsonrpc_request(&request)?;
+        return Ok(ControlParseResult::JsonRpc {
+            id: request.id,
+            event,
+        });
+    }
+
+    if let Ok(instruction) = serde_json::from_value::<JsonControlInstruction>(value) {
+        let event = match instruction {
+            JsonControlInstruction::Start => PipeEvent::Start,
+            JsonControlInstruction::Stop => PipeEvent::Stop,
+            JsonControlInstruction::Pause => PipeEvent::Pause,
+            JsonControlInstruction::Tick => PipeEvent::Tick,
+            JsonControlInstruction::Run { ticks } => PipeEvent::RunTicks(ticks),
+            JsonControlInstruction::Step { delta } => PipeEvent::Step(delta),
+            JsonControlInstruction::Advance { target } => PipeEvent::Advance(target),
+            JsonControlInstruction::Now => PipeEvent::Now,
+            JsonControlInstruction::Rate { rate } => {
+                if rate == 0 {
+                    return Err(ControlParseError::Other(
+                        "tick rate must be greater than zero".to_string(),
+                    ));
+                }
+                PipeEvent::SetRate(rate)
+            }
+        };
+
+        return Ok(ControlParseResult::Event(Some(event)));
+    }
+
+    Ok(ControlParseResult::Event(None))
 }
 
 #[cfg(windows)]
@@ -462,6 +627,7 @@ fn extract_jsonrpc_u64(
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    use serde_json::json;
     use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
     #[test]
@@ -614,6 +780,59 @@ mod tests {
         assert_eq!(error["jsonrpc"], "2.0");
         assert_eq!(error["id"], 2);
         assert_eq!(error["error"]["code"], -32602);
+    }
+
+    #[tokio::test]
+    async fn forward_commands_accepts_messagepack_requests() {
+        // Arrange
+        let (client, server) = tokio::io::duplex(256);
+        let (mut client_reader, mut client_writer) = tokio::io::split(client);
+        let (mut server_reader, mut server_writer) = tokio::io::split(server);
+        let (mut sender, mut receiver) = tokio::sync::mpsc::channel(4);
+        let forwarder = tokio::spawn(async move {
+            forward_commands(&mut server_reader, &mut server_writer, &mut sender).await
+        });
+
+        let payload = rmp_serde::to_vec(&json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "start"
+        }))
+        .unwrap();
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&(payload.len() as u32).to_be_bytes());
+        frame.extend_from_slice(&payload);
+
+        // Act
+        client_writer.write_all(&frame).await.unwrap();
+        client_writer.shutdown().await.unwrap();
+
+        let mut responses = Vec::new();
+        let mut reader = BufReader::new(&mut client_reader);
+        let mut line = String::new();
+        while reader.read_line(&mut line).await.unwrap() > 0 {
+            responses.push(line.trim().to_string());
+            line.clear();
+            if responses.len() == 1 {
+                break;
+            }
+        }
+
+        let mut events = Vec::new();
+        while let Some(event) = receiver.recv().await {
+            events.push(event);
+            if events.len() == 1 {
+                break;
+            }
+        }
+        forwarder.await.expect("forwarder should finish").unwrap();
+
+        // Assert
+        assert_eq!(events, vec![PipeEvent::Start]);
+        let success: serde_json::Value = serde_json::from_str(&responses[0]).unwrap();
+        assert_eq!(success["jsonrpc"], "2.0");
+        assert_eq!(success["id"], 1);
+        assert_eq!(success["result"], "ok");
     }
 }
 
