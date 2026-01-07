@@ -89,6 +89,25 @@ Windows named pipes also accept JSON-RPC 2.0 envelopes, one JSON object per line
 of UTF-8 text, and responses are newline-delimited JSON objects written back on the same pipe. Notifications are supported
 by omitting the `id` field (no response is emitted when `id` is absent).
 
+#### MessagePack support
+JSON-RPC 2.0 messages can also be sent as MessagePack-encoded maps instead of newline-delimited JSON. For binary payloads,
+the pipe transport uses a simple length prefix framing: each request is encoded as MessagePack, then prefixed with a
+little-endian `u32` byte length. Responses use the same framing, so a response is emitted as a `u32` length prefix followed
+by the MessagePack-encoded JSON-RPC response object.
+
+MessagePack example (pseudocode):
+```
+# Encode a request
+request = {"jsonrpc": "2.0", "id": 7, "method": "rate", "params": {"rate": 4}}
+payload = msgpack_encode(request)
+frame = u32_le(len(payload)) + payload
+pipe_write(frame)
+
+# Decode a response
+length = read_u32_le(pipe)
+response = msgpack_decode(read_exact(pipe, length))
+```
+
 **Message envelope**
 - `jsonrpc`: Must be `"2.0"`.
 - `id`: Optional. Any JSON value. If present, the listener responds with either `{ "result": "ok" }` or an `error` object.
@@ -162,6 +181,7 @@ Response:
 
 **Backward compatibility**
 The pipe listener remains backward compatible with earlier inputs. After attempting JSON-RPC parsing, it still accepts:
+- Newline-delimited JSON (the original JSON-RPC line format).
 - Plain JSON control inputs such as `{ "type": "rate", "rate": 5 }`.
 - Shorthand control lines like `tick`, `rate 2`, `advance 10`, or `run:3`.
 - Scheduler lines in the `timestamp:command` pipe format.
