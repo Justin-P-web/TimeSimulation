@@ -8,6 +8,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+tokio-util = { workspace = true }
+rmp-serde = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
