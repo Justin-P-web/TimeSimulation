@@ -67,6 +67,17 @@ enum JsonControlInstruction {
     Rate { rate: u64 },
 }
 
+#[cfg(windows)]
+#[derive(Debug, Deserialize)]
+struct JsonRpcRequest {
+    jsonrpc: String,
+    #[allow(dead_code)]
+    id: Option<serde_json::Value>,
+    method: String,
+    #[serde(default)]
+    params: Option<serde_json::Value>,
+}
+
 /// Spawns a listener that accepts pipe clients and forwards parsed commands to
 /// the provided scheduler channel.
 ///
@@ -165,19 +176,28 @@ where
 #[cfg(windows)]
 /// Attempts to parse a control instruction emitted by a Windows pipe client.
 ///
-/// The parser first accepts JSON control objects (e.g. `{ "type": "start" }`)
-/// and then falls back to a space- or colon-delimited shorthand such as
-/// `rate 2` or `tick`. Unknown commands produce `Ok(None)` so the caller can
-/// treat the input as a scheduler line instead. Numeric parameters must fit in
-/// `u64`; rate updates are validated to reject zeros to prevent a stalled
-/// dispatcher.
+/// The parser first accepts JSON-RPC requests (e.g.
+/// `{ "jsonrpc": "2.0", "method": "start" }`), then JSON control objects (e.g.
+/// `{ "type": "start" }`), and finally falls back to a space- or
+/// colon-delimited shorthand such as `rate 2` or `tick`. Unknown commands
+/// produce `Ok(None)` so the caller can treat the input as a scheduler line
+/// instead. Numeric parameters must fit in `u64`; rate updates are validated to
+/// reject zeros to prevent a stalled dispatcher.
 ///
 /// # Errors
 /// Returns a formatted usage error when numeric parsing fails or when a zero
-/// tick rate is provided. Serde JSON parsing errors are ignored so other
-/// syntaxes can be attempted.
+/// tick rate is provided. Malformed JSON-RPC requests return a structured error
+/// and do not fall back to other syntaxes.
 #[cfg(windows)]
 pub fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String> {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+        if value.get("jsonrpc").is_some() {
+            let request: JsonRpcRequest = serde_json::from_value(value)
+                .map_err(|err| format!("invalid JSON-RPC request: {err}"))?;
+            return parse_jsonrpc_request(request).map(Some);
+        }
+    }
+
     if let Ok(instruction) = serde_json::from_str::<JsonControlInstruction>(line) {
         let event = match instruction {
             JsonControlInstruction::Start => PipeEvent::Start,
@@ -247,6 +267,53 @@ pub fn parse_control_instruction(line: &str) -> Result<Option<PipeEvent>, String
     Ok(parsed)
 }
 
+#[cfg(windows)]
+fn parse_jsonrpc_request(request: JsonRpcRequest) -> Result<PipeEvent, String> {
+    let method = request.method.as_str();
+    let event = match method {
+        "start" => PipeEvent::Start,
+        "stop" => PipeEvent::Stop,
+        "pause" => PipeEvent::Pause,
+        "tick" => PipeEvent::Tick,
+        "run" => PipeEvent::RunTicks(extract_jsonrpc_u64(&request.params, "ticks", method)?),
+        "step" => PipeEvent::Step(extract_jsonrpc_u64(&request.params, "delta", method)?),
+        "advance" => PipeEvent::Advance(extract_jsonrpc_u64(&request.params, "target", method)?),
+        "now" => PipeEvent::Now,
+        "rate" => {
+            let rate = extract_jsonrpc_u64(&request.params, "rate", method)?;
+            if rate == 0 {
+                return Err("tick rate must be greater than zero".to_string());
+            }
+            PipeEvent::SetRate(rate)
+        }
+        _ => {
+            return Err(format!(
+                "invalid JSON-RPC request: unknown method '{method}'"
+            ))
+        }
+    };
+
+    Ok(event)
+}
+
+#[cfg(windows)]
+fn extract_jsonrpc_u64(
+    params: &Option<serde_json::Value>,
+    field: &str,
+    method: &str,
+) -> Result<u64, String> {
+    let value = match params {
+        Some(serde_json::Value::Number(number)) => number.as_u64(),
+        Some(serde_json::Value::Array(values)) => values.get(0).and_then(|value| value.as_u64()),
+        Some(serde_json::Value::Object(map)) => map.get(field).and_then(|value| value.as_u64()),
+        _ => None,
+    };
+
+    value.ok_or_else(|| {
+        format!("invalid JSON-RPC request: method '{method}' requires '{field}'")
+    })
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -256,18 +323,33 @@ mod tests {
     fn parse_control_instruction_supports_json_and_shorthand() {
         // Arrange
         let json_input = "{\"type\":\"rate\",\"rate\":5}";
+        let jsonrpc_input = "{\"jsonrpc\":\"2.0\",\"method\":\"rate\",\"params\":{\"rate\":7}}";
         let shorthand_tick = "tick";
         let invalid_rate = "rate 0";
 
         // Act
         let parsed_json = parse_control_instruction(json_input).unwrap();
+        let parsed_jsonrpc = parse_control_instruction(jsonrpc_input).unwrap();
         let parsed_tick = parse_control_instruction(shorthand_tick).unwrap();
         let rate_error = parse_control_instruction(invalid_rate).unwrap_err();
 
         // Assert
         assert_eq!(parsed_json, Some(PipeEvent::SetRate(5)));
+        assert_eq!(parsed_jsonrpc, Some(PipeEvent::SetRate(7)));
         assert_eq!(parsed_tick, Some(PipeEvent::Tick));
         assert_eq!(rate_error, "tick rate must be greater than zero");
+    }
+
+    #[test]
+    fn parse_control_instruction_rejects_malformed_jsonrpc() {
+        // Arrange
+        let malformed = "{\"jsonrpc\":\"2.0\",\"method\":\"rate\",\"params\":{}}";
+
+        // Act
+        let error = parse_control_instruction(malformed).unwrap_err();
+
+        // Assert
+        assert!(error.contains("invalid JSON-RPC request"));
     }
 
     #[tokio::test]
