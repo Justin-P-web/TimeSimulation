@@ -84,6 +84,88 @@ controls can be sent remotely. The listener understands the same command verbs a
 - `now`: Print the current simulated time.
 - `<timestamp:command>`: Schedule a command using the dispatcher pipe syntax.
 
+### JSON-RPC over the Windows pipe transport
+Windows named pipes also accept JSON-RPC 2.0 envelopes, one JSON object per line. Each request is read as a single line
+of UTF-8 text, and responses are newline-delimited JSON objects written back on the same pipe. Notifications are supported
+by omitting the `id` field (no response is emitted when `id` is absent).
+
+**Message envelope**
+- `jsonrpc`: Must be `"2.0"`.
+- `id`: Optional. Any JSON value. If present, the listener responds with either `{ "result": "ok" }` or an `error` object.
+- `method`: One of the supported method names listed below.
+- `params`: Optional. When provided, numeric parameters can be encoded as:
+  - A number (e.g., `5`)
+  - An array (first element is used, e.g., `[5]`)
+  - An object with a named field (e.g., `{ "rate": 5 }`)
+
+**Supported methods and parameter schemas**
+- `start`, `stop`, `pause`, `tick`, `now`: No params.
+- `run`: Requires `ticks` (`u64`).
+- `step`: Requires `delta` (`u64`).
+- `advance`: Requires `target` (`u64`).
+- `rate`: Requires `rate` (`u64`, must be non-zero).
+
+**Example requests/responses**
+Request (with response):
+```
+{"jsonrpc":"2.0","id":1,"method":"start"}
+```
+Response:
+```
+{"jsonrpc":"2.0","id":1,"result":"ok"}
+```
+
+Request with params (object form):
+```
+{"jsonrpc":"2.0","id":2,"method":"rate","params":{"rate":4}}
+```
+Response:
+```
+{"jsonrpc":"2.0","id":2,"result":"ok"}
+```
+
+Request with params (array form):
+```
+{"jsonrpc":"2.0","id":3,"method":"run","params":[10]}
+```
+Response:
+```
+{"jsonrpc":"2.0","id":3,"result":"ok"}
+```
+
+Error: unknown method (JSON-RPC error `-32601`):
+```
+{"jsonrpc":"2.0","id":4,"method":"warp"}
+```
+Response:
+```
+{"jsonrpc":"2.0","id":4,"error":{"code":-32601,"message":"method not found: 'warp'"}}
+```
+
+Error: invalid params (JSON-RPC error `-32602`):
+```
+{"jsonrpc":"2.0","id":5,"method":"rate","params":{"rate":0}}
+```
+Response:
+```
+{"jsonrpc":"2.0","id":5,"error":{"code":-32602,"message":"invalid params: tick rate must be greater than zero"}}
+```
+
+Error: invalid request (JSON-RPC error `-32600`), for example a malformed envelope:
+```
+{"jsonrpc":"2.0","id":6,"method":42}
+```
+Response:
+```
+{"jsonrpc":"2.0","id":6,"error":{"code":-32600,"message":"invalid JSON-RPC request: ..."}}
+```
+
+**Backward compatibility**
+The pipe listener remains backward compatible with earlier inputs. After attempting JSON-RPC parsing, it still accepts:
+- Plain JSON control inputs such as `{ "type": "rate", "rate": 5 }`.
+- Shorthand control lines like `tick`, `rate 2`, `advance 10`, or `run:3`.
+- Scheduler lines in the `timestamp:command` pipe format.
+
 ## Demo binaries
 The `demo` crate offers two minimal examples:
 - `demo`: On non-Windows targets it queues a `2:demo-command` instruction and a `3:scale-time` instruction (which multiplies the timestamp by four when executing) and runs four ticks to execute both. On Windows it listens for a named pipe client, parses each incoming `timestamp:command` line, and ticks after each enqueue. The Windows listener also accepts control lines to steer ticking without recompiling:
