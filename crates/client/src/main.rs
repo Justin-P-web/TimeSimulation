@@ -262,6 +262,9 @@ async fn queue_forwarder<Sink: CommandSink + Send + 'static>(
                 let guard = dispatcher.lock().await;
                 println!("current simulated time: {} (pipe)", guard.now());
             }
+            PipeEvent::AddFileNote { file, note } => {
+                println!("received file note for {file}: {note} (pipe)");
+            }
             PipeEvent::Start => {
                 let _ = tick_sender.send(true);
                 println!("ticking started (pipe)");

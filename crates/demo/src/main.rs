@@ -200,6 +200,10 @@ async fn main() -> Result<()> {
                     println!("[sim-time] {}", dispatcher.now());
                     continue;
                 }
+                Ok(Some(PipeEvent::AddFileNote { file, note })) => {
+                    println!("received file note for {file}: {note}");
+                    continue;
+                }
                 Ok(Some(PipeEvent::Scheduled(_))) => {
                     // Forward scheduling commands through the standard pipe parser below.
                 }
