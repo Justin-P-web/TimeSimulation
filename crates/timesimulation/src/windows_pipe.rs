@@ -128,6 +128,7 @@ enum JsonRpcEncoding {
 }
 
 #[cfg(windows)]
+#[derive(Debug)]
 enum ControlParseResult {
     Event(Option<PipeEvent>),
     JsonRpc {
@@ -138,6 +139,7 @@ enum ControlParseResult {
 }
 
 #[cfg(windows)]
+#[derive(Debug)]
 enum ControlParseError {
     JsonRpc(JsonRpcErrorDetail, Option<serde_json::Value>),
     Other(String),
@@ -147,6 +149,7 @@ enum ControlParseError {
 const MAX_MESSAGEPACK_FRAME_LEN: usize = 1024 * 1024;
 
 #[cfg(windows)]
+#[derive(Debug)]
 enum FrameHandling {
     NotHandled,
     Continue,
