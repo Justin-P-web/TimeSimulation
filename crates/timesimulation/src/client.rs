@@ -34,7 +34,14 @@ pub trait ClientTransport: Send {
     fn stop(&mut self) -> Result<(), ClientError>;
 }
 
+impl std::fmt::Debug for dyn ClientTransport {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientTransport").finish()
+    }
+}
+
 /// Client wrapper that delegates to a configurable transport backend.
+#[derive(Debug)]
 pub struct SimulationClient {
     transport: Box<dyn ClientTransport>,
 }
@@ -87,6 +94,7 @@ impl SimulationClient {
 }
 
 /// In-memory transport that drives a dispatcher directly.
+#[derive(Debug)]
 struct InMemoryTransport<Sink: CommandSink> {
     dispatcher: Dispatcher<Sink>,
     running: bool,
