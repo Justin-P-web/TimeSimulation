@@ -164,7 +164,7 @@ pub async fn listen_for_pipe_commands(
     pipe_name: &str,
     sender: Sender<PipeEvent>,
 ) -> io::Result<()> {
-    let pipe_path = format!(r"\\.\\pipe\\{}", pipe_name);
+    let pipe_path = normalize_pipe_path(pipe_name);
 
     loop {
         let mut connection = ServerOptions::new().create(&pipe_path)?;
@@ -178,6 +178,16 @@ pub async fn listen_for_pipe_commands(
                 eprintln!("named pipe client error: {err}");
             }
         });
+    }
+}
+
+#[cfg(windows)]
+fn normalize_pipe_path(pipe_name: &str) -> String {
+    let trimmed = pipe_name.trim();
+    if trimmed.starts_with(r"\\.\pipe\") {
+        trimmed.to_string()
+    } else {
+        format!(r"\\.\\pipe\\{}", trimmed)
     }
 }
 
