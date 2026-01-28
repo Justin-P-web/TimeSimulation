@@ -492,7 +492,9 @@ fn try_extract_line(buffer: &mut BytesMut) -> Option<Result<String, String>> {
 /// tick rate is provided. Malformed JSON-RPC requests return a structured error
 /// and do not fall back to other syntaxes.
 #[cfg(windows)]
-pub fn parse_control_instruction(line: &str) -> Result<ControlParseResult, ControlParseError> {
+pub(crate) fn parse_control_instruction(
+    line: &str,
+) -> Result<ControlParseResult, ControlParseError> {
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
         return parse_control_value(value, JsonRpcEncoding::Json);
     }
@@ -545,6 +547,20 @@ pub fn parse_control_instruction(line: &str) -> Result<ControlParseResult, Contr
     };
 
     Ok(ControlParseResult::Event(parsed))
+}
+
+#[cfg(windows)]
+/// Parses a control instruction and returns any matching event for external callers.
+pub fn parse_control_event(line: &str) -> Result<Option<PipeEvent>, String> {
+    match parse_control_instruction(line) {
+        Ok(ControlParseResult::Event(event)) => Ok(event),
+        Ok(ControlParseResult::JsonRpc { event, .. }) => Ok(Some(event)),
+        Err(ControlParseError::Other(message)) => Err(message),
+        Err(ControlParseError::JsonRpc(detail, _)) => Err(format!(
+            "jsonrpc error {}: {}",
+            detail.code, detail.message
+        )),
+    }
 }
 
 #[cfg(windows)]

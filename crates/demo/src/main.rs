@@ -9,7 +9,7 @@
 use timesimulation::{CommandSink, Dispatcher, ScheduledCommand};
 
 #[cfg(windows)]
-use timesimulation::windows_pipe::{PipeEvent, parse_control_instruction};
+use timesimulation::windows_pipe::{PipeEvent, parse_control_event};
 
 #[cfg(windows)]
 use anyhow::Result;
@@ -160,7 +160,7 @@ async fn main() -> Result<()> {
                 break;
             }
 
-            match parse_control_instruction(trimmed) {
+            match parse_control_event(trimmed) {
                 Ok(Some(PipeEvent::Start)) => {
                     ticking = true;
                     println!("ticking resumed; enqueueing will trigger ticks");
