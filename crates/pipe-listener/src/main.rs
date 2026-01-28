@@ -101,6 +101,9 @@ async fn main() -> anyhow::Result<()> {
                         let dispatcher = dispatcher.lock().await;
                         println!("[sim-time] {}", dispatcher.now());
                     }
+                    PipeEvent::AddFileNote { file, note } => {
+                        println!("received file note for {file}: {note}");
+                    }
                     PipeEvent::Start => {
                         ticking = true;
                     }

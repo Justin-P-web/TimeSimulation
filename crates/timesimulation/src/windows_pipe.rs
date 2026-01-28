@@ -33,6 +33,8 @@ pub enum PipeEvent {
     Scheduled(ScheduledCommand),
     /// Notification that the remote client disconnected.
     Disconnected,
+    /// Associate a note with a file in the client.
+    AddFileNote { file: String, note: String },
 }
 
 impl From<ScheduledCommand> for PipeEvent {
@@ -599,7 +601,11 @@ fn parse_jsonrpc_request(request: &JsonRpcRequest) -> Result<PipeEvent, ControlP
         "stop" => PipeEvent::Stop,
         "pause" => PipeEvent::Pause,
         "tick" => PipeEvent::Tick,
-        "AddFileNoteAsync" | "addfilenoteasync" => PipeEvent::Now,
+        "AddFileNoteAsync" | "addfilenoteasync" | "addFileNote" | "addfilenote" => {
+            let file = extract_jsonrpc_string(&request.params, "file", 0, method, &request.id)?;
+            let note = extract_jsonrpc_string(&request.params, "note", 1, method, &request.id)?;
+            PipeEvent::AddFileNote { file, note }
+        }
         "run" => PipeEvent::RunTicks(extract_jsonrpc_u64(
             &request.params,
             "ticks",
@@ -674,6 +680,62 @@ fn extract_jsonrpc_u64(
     })
 }
 
+#[cfg(windows)]
+fn extract_jsonrpc_string(
+    params: &Option<serde_json::Value>,
+    field: &str,
+    index: usize,
+    method: &str,
+    id: &Option<serde_json::Value>,
+) -> Result<String, ControlParseError> {
+    let value = match params {
+        Some(serde_json::Value::Array(values)) => match values.get(index) {
+            Some(serde_json::Value::String(value)) => Some(value.clone()),
+            Some(_) => {
+                return Err(ControlParseError::JsonRpc(
+                    JsonRpcErrorDetail {
+                        code: -32602,
+                        message: format!(
+                            "invalid params: method '{method}' requires '{field}' as a string"
+                        ),
+                        data: None,
+                    },
+                    id.clone(),
+                ))
+            }
+            None => None,
+        },
+        Some(serde_json::Value::Object(map)) => match map.get(field) {
+            Some(serde_json::Value::String(value)) => Some(value.clone()),
+            Some(_) => {
+                return Err(ControlParseError::JsonRpc(
+                    JsonRpcErrorDetail {
+                        code: -32602,
+                        message: format!(
+                            "invalid params: method '{method}' requires '{field}' as a string"
+                        ),
+                        data: None,
+                    },
+                    id.clone(),
+                ))
+            }
+            None => None,
+        },
+        _ => None,
+    };
+
+    value.ok_or_else(|| {
+        ControlParseError::JsonRpc(
+            JsonRpcErrorDetail {
+                code: -32602,
+                message: format!("invalid params: method '{method}' requires '{field}'"),
+                data: None,
+            },
+            id.clone(),
+        )
+    })
+}
+
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
@@ -685,7 +747,8 @@ mod tests {
         // Arrange
         let json_input = "{\"type\":\"rate\",\"rate\":5}";
         let jsonrpc_input = "{\"jsonrpc\":\"2.0\",\"method\":\"rate\",\"params\":{\"rate\":7}}";
-        let jsonrpc_note = "{\"jsonrpc\":\"2.0\",\"method\":\"AddFileNoteAsync\"}";
+        let jsonrpc_note =
+            "{\"jsonrpc\":\"2.0\",\"method\":\"AddFileNoteAsync\",\"params\":{\"file\":\"demo.txt\",\"note\":\"hello\"}}";
         let shorthand_tick = "tick";
         let invalid_rate = "rate 0";
 
@@ -712,10 +775,10 @@ mod tests {
         assert!(matches!(
             parsed_jsonrpc_note,
             ControlParseResult::JsonRpc {
-                event: PipeEvent::Now,
+                event: PipeEvent::AddFileNote { ref file, ref note },
                 encoding: JsonRpcEncoding::Json,
                 ..
-            }
+            } if file == "demo.txt" && note == "hello"
         ));
         assert!(matches!(
             parsed_tick,
@@ -741,6 +804,25 @@ mod tests {
         match error {
             ControlParseError::JsonRpc(detail, _) => {
                 assert!(detail.message.contains("invalid params"));
+                assert_eq!(detail.code, -32602);
+            }
+            _ => panic!("expected JSON-RPC error"),
+        }
+    }
+
+    #[test]
+    fn parse_control_instruction_rejects_invalid_add_file_note_params() {
+        // Arrange
+        let malformed =
+            "{\"jsonrpc\":\"2.0\",\"method\":\"addFileNote\",\"params\":{\"file\":5,\"note\":\"ok\"}}";
+
+        // Act
+        let error = parse_control_instruction(malformed).unwrap_err();
+
+        // Assert
+        match error {
+            ControlParseError::JsonRpc(detail, _) => {
+                assert!(detail.message.contains("requires 'file' as a string"));
                 assert_eq!(detail.code, -32602);
             }
             _ => panic!("expected JSON-RPC error"),
