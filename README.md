@@ -118,7 +118,7 @@ response = msgpack_decode(read_exact(pipe, length))
   - An object with a named field (e.g., `{ "rate": 5 }`)
 
 **Supported methods and parameter schemas**
-- `start`, `stop`, `pause`, `tick`, `now`: No params.
+- `start`, `stop`, `pause`, `tick`, `now`, `AddFileNoteAsync` (alias for `now`): No params.
 - `run`: Requires `ticks` (`u64`).
 - `step`: Requires `delta` (`u64`).
 - `advance`: Requires `target` (`u64`).
