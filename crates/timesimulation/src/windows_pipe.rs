@@ -172,9 +172,8 @@ pub async fn listen_for_pipe_commands(
         let mut client_sender = sender.clone();
 
         tokio::spawn(async move {
-            if let Err(err) =
-                forward_commands(&mut connection, &mut connection, &mut client_sender).await
-            {
+            let (mut reader, mut writer) = tokio::io::split(connection);
+            if let Err(err) = forward_commands(&mut reader, &mut writer, &mut client_sender).await {
                 eprintln!("named pipe client error: {err}");
             }
         });
