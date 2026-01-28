@@ -599,6 +599,7 @@ fn parse_jsonrpc_request(request: &JsonRpcRequest) -> Result<PipeEvent, ControlP
         "stop" => PipeEvent::Stop,
         "pause" => PipeEvent::Pause,
         "tick" => PipeEvent::Tick,
+        "AddFileNoteAsync" | "addfilenoteasync" => PipeEvent::Now,
         "run" => PipeEvent::RunTicks(extract_jsonrpc_u64(
             &request.params,
             "ticks",
@@ -684,12 +685,14 @@ mod tests {
         // Arrange
         let json_input = "{\"type\":\"rate\",\"rate\":5}";
         let jsonrpc_input = "{\"jsonrpc\":\"2.0\",\"method\":\"rate\",\"params\":{\"rate\":7}}";
+        let jsonrpc_note = "{\"jsonrpc\":\"2.0\",\"method\":\"AddFileNoteAsync\"}";
         let shorthand_tick = "tick";
         let invalid_rate = "rate 0";
 
         // Act
         let parsed_json = parse_control_instruction(json_input).unwrap();
         let parsed_jsonrpc = parse_control_instruction(jsonrpc_input).unwrap();
+        let parsed_jsonrpc_note = parse_control_instruction(jsonrpc_note).unwrap();
         let parsed_tick = parse_control_instruction(shorthand_tick).unwrap();
         let rate_error = parse_control_instruction(invalid_rate).unwrap_err();
 
@@ -702,6 +705,14 @@ mod tests {
             parsed_jsonrpc,
             ControlParseResult::JsonRpc {
                 event: PipeEvent::SetRate(7),
+                encoding: JsonRpcEncoding::Json,
+                ..
+            }
+        ));
+        assert!(matches!(
+            parsed_jsonrpc_note,
+            ControlParseResult::JsonRpc {
+                event: PipeEvent::Now,
                 encoding: JsonRpcEncoding::Json,
                 ..
             }
