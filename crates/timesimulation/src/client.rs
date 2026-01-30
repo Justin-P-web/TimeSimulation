@@ -2,6 +2,7 @@
 
 use std::io::{self, BufRead};
 
+use crate::command::CommandPayload;
 use crate::dispatcher::{CommandSink, Dispatcher};
 use crate::pipe::PipeParseError;
 
@@ -25,7 +26,11 @@ pub trait ClientTransport: Send {
     fn set_tick_rate(&mut self, tick_rate: u64) -> Result<(), ClientError>;
 
     /// Schedules a command for future execution.
-    fn enqueue_command(&mut self, timestamp: u64, command: String) -> Result<(), ClientError>;
+    fn enqueue_command(
+        &mut self,
+        timestamp: u64,
+        command: CommandPayload,
+    ) -> Result<(), ClientError>;
 
     /// Starts processing using the configured transport.
     fn start(&mut self) -> Result<(), ClientError>;
@@ -78,7 +83,11 @@ impl SimulationClient {
     }
 
     /// Enqueues a command for future execution via the configured transport.
-    pub fn enqueue_command(&mut self, timestamp: u64, command: String) -> Result<(), ClientError> {
+    pub fn enqueue_command(
+        &mut self,
+        timestamp: u64,
+        command: CommandPayload,
+    ) -> Result<(), ClientError> {
         self.transport.enqueue_command(timestamp, command)
     }
 
@@ -119,7 +128,11 @@ impl<Sink: CommandSink + Send> ClientTransport for InMemoryTransport<Sink> {
         Ok(())
     }
 
-    fn enqueue_command(&mut self, timestamp: u64, command: String) -> Result<(), ClientError> {
+    fn enqueue_command(
+        &mut self,
+        timestamp: u64,
+        command: CommandPayload,
+    ) -> Result<(), ClientError> {
         self.dispatcher.enqueue(timestamp, command);
         if self.running {
             self.dispatcher.advance_to(timestamp);
@@ -165,7 +178,11 @@ impl<Sink: CommandSink + Send> ClientTransport for PipeTransport<Sink> {
         Ok(())
     }
 
-    fn enqueue_command(&mut self, timestamp: u64, command: String) -> Result<(), ClientError> {
+    fn enqueue_command(
+        &mut self,
+        timestamp: u64,
+        command: CommandPayload,
+    ) -> Result<(), ClientError> {
         self.dispatcher.enqueue(timestamp, command);
         if self.running {
             self.dispatcher.advance_to(timestamp);
@@ -205,6 +222,7 @@ impl<Sink: CommandSink + Send> ClientTransport for PipeTransport<Sink> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::command::CommandPayload;
     use crate::scheduler::ScheduledCommand;
     use std::io::Cursor;
     use std::sync::{Arc, Mutex};
@@ -238,14 +256,14 @@ mod tests {
         client.connect().unwrap();
         client.start().unwrap();
         client
-            .enqueue_command(3, "fire".to_string())
+            .enqueue_command(3, CommandPayload::raw("fire"))
             .expect("enqueue should succeed");
         client.stop().unwrap();
 
         let guard = sink.lock().unwrap();
         assert_eq!(guard.times, vec![3]);
         assert_eq!(guard.executed.len(), 1);
-        assert_eq!(guard.executed[0].command, "fire");
+        assert_eq!(guard.executed[0].command.as_str(), "fire");
     }
 
     #[test]
@@ -262,6 +280,6 @@ mod tests {
         let guard = sink.lock().unwrap();
         assert_eq!(guard.times, vec![1, 2]);
         assert_eq!(guard.executed.len(), 2);
-        assert_eq!(guard.executed[0].command, "first");
+        assert_eq!(guard.executed[0].command.as_str(), "first");
     }
 }

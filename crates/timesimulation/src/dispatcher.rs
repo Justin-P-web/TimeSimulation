@@ -1,6 +1,7 @@
 //! Coordination logic for deterministic simulated execution.
 
 use crate::clock::SimClock;
+use crate::command::CommandPayload;
 use crate::pipe::{PipeParseError, parse_pipe_line};
 use crate::scheduler::{CommandScheduler, ScheduledCommand};
 
@@ -53,7 +54,7 @@ impl<Sink: CommandSink> Dispatcher<Sink> {
     }
 
     /// Enqueues a command for execution at the given timestamp.
-    pub fn enqueue(&mut self, timestamp: u64, command: String) {
+    pub fn enqueue(&mut self, timestamp: u64, command: CommandPayload) {
         self.scheduler.schedule(timestamp, command);
     }
 
@@ -147,9 +148,9 @@ mod tests {
         let sink = RecordingSink::default();
         let mut dispatcher = Dispatcher::new_with_clock(sink, 0);
 
-        dispatcher.enqueue(2, "second".to_string());
-        dispatcher.enqueue(1, "first".to_string());
-        dispatcher.enqueue(3, "third".to_string());
+        dispatcher.enqueue(2, CommandPayload::raw("second"));
+        dispatcher.enqueue(1, CommandPayload::raw("first"));
+        dispatcher.enqueue(3, CommandPayload::raw("third"));
 
         dispatcher.step(1);
         dispatcher.step(1);
@@ -159,18 +160,18 @@ mod tests {
         assert_eq!(
             dispatcher.sink.executed,
             vec![
-                ScheduledCommand {
-                    timestamp: 1,
-                    command: "first".to_string(),
-                },
-                ScheduledCommand {
-                    timestamp: 2,
-                    command: "second".to_string(),
-                },
-                ScheduledCommand {
-                    timestamp: 3,
-                    command: "third".to_string(),
-                },
+                    ScheduledCommand {
+                        timestamp: 1,
+                        command: CommandPayload::raw("first"),
+                    },
+                    ScheduledCommand {
+                        timestamp: 2,
+                        command: CommandPayload::raw("second"),
+                    },
+                    ScheduledCommand {
+                        timestamp: 3,
+                        command: CommandPayload::raw("third"),
+                    },
             ]
         );
     }
@@ -186,7 +187,7 @@ mod tests {
         dispatcher.advance_to(5);
 
         assert_eq!(dispatcher.sink.executed.len(), 1);
-        assert_eq!(dispatcher.sink.executed[0].command, "launch");
+        assert_eq!(dispatcher.sink.executed[0].command.as_str(), "launch");
     }
 
     #[test]

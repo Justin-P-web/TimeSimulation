@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use clap::{Parser, ValueEnum};
 use timesimulation::windows_pipe::PipeEvent;
-use timesimulation::{CommandSink, Dispatcher, ScheduledCommand, parse_pipe_line};
+use timesimulation::{CommandPayload, CommandSink, Dispatcher, ScheduledCommand, parse_pipe_line};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::{Mutex, mpsc, watch};
 use tokio::time;
@@ -170,7 +170,7 @@ fn parse_repl_command(line: &str) -> Result<ReplCommand, String> {
 
             Ok(ReplCommand::Enqueue(ScheduledCommand {
                 timestamp,
-                command: body.to_string(),
+                command: CommandPayload::raw(body),
             }))
         }
         "pipe" => {
@@ -669,7 +669,7 @@ mod tests {
                 "enqueue 9 launch",
                 ReplCommand::Enqueue(ScheduledCommand {
                     timestamp: 9,
-                    command: "launch".to_string(),
+                    command: CommandPayload::raw("launch"),
                 }),
             ),
             ("pipe 4:cmd", ReplCommand::PipeLine("4:cmd".to_string())),
@@ -755,7 +755,7 @@ mod tests {
         pipe_sender
             .send(PipeEvent::Scheduled(ScheduledCommand {
                 timestamp: 2,
-                command: "mission".to_string(),
+                command: CommandPayload::raw("mission"),
             }))
             .await
             .unwrap();
@@ -777,6 +777,6 @@ mod tests {
         let recorded_executed = executed.lock().unwrap().clone();
         assert_eq!(recorded_times, vec![2, 5, 10, 12]);
         assert_eq!(recorded_executed.len(), 1);
-        assert_eq!(recorded_executed[0].command, "mission");
+        assert_eq!(recorded_executed[0].command.as_str(), "mission");
     }
 }
