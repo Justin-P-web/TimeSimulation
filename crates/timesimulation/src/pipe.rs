@@ -4,6 +4,7 @@ use std::fs::File;
 use std::io::{self, BufRead, BufReader};
 use std::path::Path;
 
+use crate::command::CommandPayload;
 use crate::scheduler::ScheduledCommand;
 
 /// Represents a parsed command originating from a named pipe.
@@ -12,7 +13,7 @@ pub struct PipeCommand {
     /// Target timestamp for execution.
     pub timestamp: u64,
     /// Command payload parsed from the pipe.
-    pub command: String,
+    pub command: CommandPayload,
 }
 
 /// Errors that can occur while parsing or reading named pipe input.
@@ -44,7 +45,7 @@ pub fn parse_pipe_line(line: &str) -> Result<PipeCommand, PipeParseError> {
 
     Ok(PipeCommand {
         timestamp,
-        command: command_part.to_string(),
+        command: CommandPayload::raw(command_part),
     })
 }
 
@@ -82,7 +83,7 @@ mod tests {
     fn parses_pipe_lines_with_whitespace() {
         let parsed = parse_pipe_line(" 42 : go ").expect("parse should succeed");
         assert_eq!(parsed.timestamp, 42);
-        assert_eq!(parsed.command, "go");
+        assert_eq!(parsed.command.as_str(), "go");
     }
 
     #[test]
@@ -99,7 +100,7 @@ mod tests {
 
         let commands = read_pipe_commands(temp.path()).expect("reading should succeed");
         assert_eq!(commands.len(), 2);
-        assert_eq!(commands[0].command, "first");
+        assert_eq!(commands[0].command.as_str(), "first");
         assert_eq!(commands[1].timestamp, 2);
     }
 }

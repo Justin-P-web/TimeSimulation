@@ -250,6 +250,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use timesimulation::CommandPayload;
 
     #[test]
     fn logging_sink_forwards_messages_to_channel() {
@@ -261,7 +262,7 @@ mod tests {
         sink.publish_time(5);
         sink.execute(&ScheduledCommand {
             timestamp: 3,
-            command: "demo".to_string(),
+            command: CommandPayload::raw("demo"),
         });
 
         let first = receiver

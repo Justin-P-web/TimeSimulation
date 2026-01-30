@@ -12,3 +12,5 @@ pub use clock::SimClock;
 pub use dispatcher::{CommandSink, Dispatcher};
 pub use pipe::{PipeCommand, PipeParseError, parse_pipe_line, read_pipe_commands};
 pub use scheduler::{CommandScheduler, ScheduledCommand};
+pub mod command;
+pub use command::CommandPayload;

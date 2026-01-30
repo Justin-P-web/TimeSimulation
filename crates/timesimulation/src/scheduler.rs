@@ -3,13 +3,15 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+use crate::command::CommandPayload;
+
 /// A command scheduled for execution at a specific simulated timestamp.
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub struct ScheduledCommand {
     /// Target timestamp for when the command becomes eligible to run.
     pub timestamp: u64,
     /// Arbitrary command payload supplied by external processes.
-    pub command: String,
+    pub command: CommandPayload,
 }
 
 impl Ord for ScheduledCommand {
@@ -47,7 +49,7 @@ impl CommandScheduler {
     /// # Parameters
     /// - `timestamp`: Simulated timestamp when the command should execute.
     /// - `command`: Arbitrary textual command content.
-    pub fn schedule(&mut self, timestamp: u64, command: String) {
+    pub fn schedule(&mut self, timestamp: u64, command: CommandPayload) {
         self.queue.push(ScheduledCommand { timestamp, command });
     }
 
@@ -93,9 +95,9 @@ mod tests {
     #[test]
     fn scheduler_orders_by_timestamp() {
         let mut scheduler = CommandScheduler::new();
-        scheduler.schedule(5, "later".to_string());
-        scheduler.schedule(1, "first".to_string());
-        scheduler.schedule(3, "middle".to_string());
+        scheduler.schedule(5, CommandPayload::raw("later"));
+        scheduler.schedule(1, CommandPayload::raw("first"));
+        scheduler.schedule(3, CommandPayload::raw("middle"));
 
         assert!(scheduler.has_ready(1));
         let ready = scheduler.drain_ready(10);
@@ -108,7 +110,7 @@ mod tests {
         let mut scheduler = CommandScheduler::new();
         assert!(scheduler.next_timestamp().is_none());
 
-        scheduler.schedule(7, "cmd".into());
+        scheduler.schedule(7, CommandPayload::raw("cmd"));
         assert_eq!(scheduler.next_timestamp(), Some(7));
     }
 }

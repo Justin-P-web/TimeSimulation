@@ -1,7 +1,9 @@
 use std::io::BufReader;
 use std::sync::{Arc, Mutex};
 
-use timesimulation::{ClientError, CommandSink, Dispatcher, ScheduledCommand, SimulationClient};
+use timesimulation::{
+    ClientError, CommandPayload, CommandSink, Dispatcher, ScheduledCommand, SimulationClient,
+};
 
 #[derive(Debug, Default)]
 struct RecordingSink {
@@ -47,16 +49,16 @@ fn connecting_and_starting_dispatcher_executes_enqueued_commands() {
     // Commands enqueued before starting should remain pending until the
     // dispatcher is marked as running.
     client
-        .enqueue_command(2, "pending".to_string())
+        .enqueue_command(2, CommandPayload::raw("pending"))
         .expect("enqueue should succeed");
     assert!(sink.lock().times.is_empty());
 
     client.start().expect("start should succeed");
     client
-        .enqueue_command(1, "first".to_string())
+        .enqueue_command(1, CommandPayload::raw("first"))
         .expect("enqueue after start should succeed");
     client
-        .enqueue_command(3, "second".to_string())
+        .enqueue_command(3, CommandPayload::raw("second"))
         .expect("enqueue after start should succeed");
 
     let guard = sink.lock();
@@ -65,7 +67,7 @@ fn connecting_and_starting_dispatcher_executes_enqueued_commands() {
         guard
             .executed
             .iter()
-            .map(|cmd| (cmd.timestamp, cmd.command.clone()))
+            .map(|cmd| (cmd.timestamp, cmd.command.as_str().to_string()))
             .collect::<Vec<_>>(),
         vec![
             (1, "first".to_string()),
@@ -95,7 +97,7 @@ fn set_tick_rate_updates_progression_for_pipe_transport() {
         guard
             .executed
             .iter()
-            .map(|cmd| (cmd.timestamp, cmd.command.clone()))
+            .map(|cmd| (cmd.timestamp, cmd.command.as_str().to_string()))
             .collect::<Vec<_>>(),
         vec![(1, "first".to_string()), (2, "second".to_string())],
     );
@@ -113,13 +115,13 @@ fn repl_style_enqueues_execute_in_timestamp_order() {
     // Enqueue commands in the same order a REPL user would enter them and
     // validate they execute sequentially as simulated time advances.
     client
-        .enqueue_command(1, "first".to_string())
+        .enqueue_command(1, CommandPayload::raw("first"))
         .expect("enqueue should succeed");
     client
-        .enqueue_command(2, "second".to_string())
+        .enqueue_command(2, CommandPayload::raw("second"))
         .expect("enqueue should succeed");
     client
-        .enqueue_command(3, "third".to_string())
+        .enqueue_command(3, CommandPayload::raw("third"))
         .expect("enqueue should succeed");
 
     let guard = sink.lock();
@@ -128,7 +130,7 @@ fn repl_style_enqueues_execute_in_timestamp_order() {
         guard
             .executed
             .iter()
-            .map(|cmd| (cmd.timestamp, cmd.command.clone()))
+            .map(|cmd| (cmd.timestamp, cmd.command.as_str().to_string()))
             .collect::<Vec<_>>(),
         vec![
             (1, "first".to_string()),

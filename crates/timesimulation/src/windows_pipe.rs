@@ -767,6 +767,7 @@ fn extract_jsonrpc_string(
 #[cfg(all(test, windows))]
 mod tests {
     use super::*;
+    use crate::command::CommandPayload;
     use serde_json::json;
     use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
@@ -891,7 +892,7 @@ mod tests {
                 PipeEvent::Step(3),
                 PipeEvent::Scheduled(ScheduledCommand {
                     timestamp: 4,
-                    command: "launch".to_string(),
+                    command: CommandPayload::raw("launch"),
                 }),
             ]
         );
